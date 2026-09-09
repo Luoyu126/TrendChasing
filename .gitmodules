@@ -1,0 +1,3 @@
+[submodule "external/RSSHub"]
+	path = external/RSSHub
+	url = git@github.com:Luoyu126/RSSHub.git
