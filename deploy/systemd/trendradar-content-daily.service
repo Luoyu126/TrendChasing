@@ -1,0 +1,12 @@
+[Unit]
+Description=TrendRadar unified daily email
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/chenyy/TrendRadar
+Environment=LITELLM_LOCAL_MODEL_COST_MAP=True
+ExecStart=/usr/bin/flock -w 3600 /home/chenyy/TrendRadar/output/content_pool/scheduler.lock /home/chenyy/TrendRadar/.venv/bin/python /home/chenyy/TrendRadar/scripts/run_content_daily.py --send-ready --send
+TimeoutStartSec=2h
+UMask=0077

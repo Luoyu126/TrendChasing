@@ -38,12 +38,11 @@ class AIClient:
         self.timeout = config.get("TIMEOUT", 120)
         self.num_retries = config.get("NUM_RETRIES", 2)
         self.fallback_models = config.get("FALLBACK_MODELS", [])
+        self.extra_params = config.get("EXTRA_PARAMS", {})
+        self.last_usage = None
+        self.last_cost = None
 
-    def chat(
-        self,
-        messages: List[Dict[str, str]],
-        **kwargs
-    ) -> str:
+    def chat(self, messages: List[Dict[str, str]], **kwargs) -> str:
         """
         调用 AI 模型进行对话
 
@@ -65,6 +64,8 @@ class AIClient:
             "timeout": kwargs.get("timeout", self.timeout),
             "num_retries": kwargs.get("num_retries", self.num_retries),
         }
+
+        params.update(self.extra_params)
 
         # 添加 API Key
         if self.api_key:
@@ -89,7 +90,19 @@ class AIClient:
                 params[key] = value
 
         # 调用 LiteLLM
+        self.last_usage = None
+        self.last_cost = None
         response = completion(**params)
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            self.last_usage = {
+                "input_tokens": getattr(usage, "prompt_tokens", None),
+                "output_tokens": getattr(usage, "completion_tokens", None),
+            }
+        # Only record a cost supplied by the provider/client; do not invent prices.
+        self.last_cost = (getattr(response, "_hidden_params", None) or {}).get(
+            "response_cost"
+        )
 
         # 提取响应内容
         # 某些模型/提供商返回 list（内容块）而非 str，统一转为 str
@@ -112,10 +125,16 @@ class AIClient:
             return False, "未配置 AI 模型（model）"
 
         if not self.api_key:
-            return False, "未配置 AI API Key，请在 config.yaml 或环境变量 AI_API_KEY 中设置"
+            return (
+                False,
+                "未配置 AI API Key，请在 config.yaml 或环境变量 AI_API_KEY 中设置",
+            )
 
         # 验证模型格式（应该包含 provider/model）
         if "/" not in self.model:
-            return False, f"模型格式错误: {self.model}，应为 'provider/model' 格式（如 'deepseek/deepseek-chat'）"
+            return (
+                False,
+                f"模型格式错误: {self.model}，应为 'provider/model' 格式（如 'deepseek/deepseek-chat'）",
+            )
 
         return True, ""

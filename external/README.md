@@ -11,7 +11,7 @@ TrendRadar 记录它的具体提交版本；RSSHub 的源码和修改历史由�
 
 添加子模块不会自动启动 RSSHub，也不会自动启用小红书、公众号等订阅。
 每个平台的路由、账号参数和所需凭据仍需单独配置、验证。
-当前尚未添加 RSSHub 的统一部署配置。
+小红书的独立部署与内容池配置见 [小红书采集说明](../docs/xiaohongshu-content-pool.md)。
 
 ## 获取源码
 
@@ -94,3 +94,20 @@ RSSHub 作为独立服务运行，TrendRadar 通过 `config/config.yaml` 中的 
 避免将外部源码发送到 TrendRadar 镜像的构建上下文；RSSHub 应使用自己的独立构建上下文。
 
 平台 Cookie、Token 等凭据通过运行环境注入，不要提交到任一仓库。
+
+## Paper-Pulse 参考仓库
+
+`Paper-Pulse/` 是 [yangjunx21/Paper-Pulse](https://github.com/yangjunx21/Paper-Pulse)
+的独立本地克隆，固定到参考提交 `f05147ac12eab8ffd7b84a7d44e819678d512e03`。
+它不是 Git 子模块，也不是 TrendRadar 的运行依赖。论文功能独立实现在
+`trendradar/papers/`；配置、使用与许可核查说明见
+[论文推荐说明](../docs/paper-recommendations.md)。
+
+## WeRSS 参考仓库
+
+`we-mp-rss/` 是 [rachelos/we-mp-rss](https://github.com/rachelos/we-mp-rss)
+的独立本地克隆，参考提交为 `f54aba50cbf349ed7e4ee1dae8bfe9990d0c5894`。
+当前部署使用 `docker/docker-compose.werss.yml` 中的发布镜像，不依赖该目录。
+
+这两个未修改的参考克隆由主仓库 `.gitignore` 排除，不随主仓库上传。
+需要查阅对应源码时可单独克隆，再检出上述参考提交。

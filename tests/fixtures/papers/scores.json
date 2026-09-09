@@ -1,0 +1,4 @@
+{
+  "arxiv:2609.00001": {"relevance_score": 0.92, "reason": "Evaluates evidence attribution and factual accuracy for the configured scientific question-answering research question.", "research_topics": ["Scientific question answering", "Evidence attribution"]},
+  "arxiv:2609.00002": {"relevance_score": 0.1, "reason": "Orbital mechanics does not address the configured research question.", "research_topics": ["Orbital mechanics"]}
+}

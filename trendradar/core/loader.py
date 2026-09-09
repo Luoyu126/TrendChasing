@@ -576,6 +576,12 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
     # RSS 配置
     config["RSS"] = _load_rss_config(config_data)
 
+    # Optional paper branch: sibling config, independent of news interests.
+    config["PAPERS_CONFIG_PATH"] = os.environ.get("PAPERS_CONFIG_PATH") or (
+        str(Path(config_path).parent / "papers.yaml")
+        if (Path(config_path).parent / "papers.yaml").exists() else None
+    )
+
     # AI 模型共享配置
     config["AI"] = _load_ai_config(config_data)
 

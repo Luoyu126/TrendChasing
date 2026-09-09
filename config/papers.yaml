@@ -1,0 +1,94 @@
+# Research interests configured; enable when the daily pipeline is ready.
+enabled: true
+research_question: |-
+  1. How can exploration diversity in reinforcement learning be improved to
+     broaden the effective exploration space of learned policies?
+  2. How can reward design and policy optimization during exploitation be
+     improved to reshape the learned policy distribution and better align it
+     with the target dataset distribution?
+  3. How can classical reinforcement learning algorithms be advanced through
+     algorithmic innovations, rigorous proofs, and improved theoretical guarantees?
+
+  Treat the three research questions as alternative relevance criteria: a paper
+  can be highly relevant by substantially addressing any one of them. Do not
+  require exploration-related terminology for papers addressing algorithmic theory.
+  Prioritize methodological contributions and theoretical results. Application
+  papers are relevant when they introduce transferable RL methods or analysis;
+  merely applying a standard RL algorithm is insufficient for a high relevance score.
+  Exploration and exploitation need not be strictly separate training stages.
+  Interpret policy distribution alignment broadly; do not restrict the scope to
+  offline RL or language models. Behavior-policy constraints, state-action or
+  trajectory distributions, and target-task output distributions can be relevant
+  when they substantively address the research questions.
+topics:
+  - Reinforcement learning
+  - Exploration-exploitation trade-off
+  - Exploration diversity and state-space coverage
+  - Reward design and policy optimization
+  - Policy distribution alignment and regularization
+  - Classical reinforcement learning algorithms and theory
+# Case-insensitive phrase matching over title AND complete abstract.
+# OR within each list; AND between nonempty lists. Empty lists impose no constraint.
+keyword_prefilter: false
+# These terms also provide context to the LLM when keyword_prefilter is false.
+keywords:
+  - exploration-exploitation
+  - exploration
+  - exploitation
+  - regret minimization
+  - diverse exploration
+  - policy diversity
+  - state coverage
+  - state entropy
+  - intrinsic motivation
+  - intrinsic reward
+  - curiosity-driven exploration
+  - exploration bonus
+  - skill discovery
+  - reward shaping
+  - reward design
+  - policy optimization
+  - policy improvement
+  - entropy regularization
+  - maximum entropy reinforcement learning
+  - KL regularization
+  - trust region
+  - occupancy measure
+  - state-action distribution
+  - distribution matching
+  - distribution shift
+  - policy constraint
+  - behavior regularization
+  - offline reinforcement learning
+  - off-policy learning
+  - policy gradient
+  - actor-critic
+  - Q-learning
+  - temporal difference
+  - policy iteration
+  - value iteration
+  - convergence analysis
+  - sample complexity
+  - regret bounds
+  - finite-time analysis
+  - theoretical guarantees
+required_keywords: []
+relevance_threshold: 0.7
+# Maximum papers in each daily digest, not a delivery ledger or minimum quota.
+daily_output_limit: 10
+relevance_weight: 0.85
+recency_weight: 0.15
+recency_half_life_hours: 72
+lookback_days: 7
+arxiv_query: >-
+  (cat:cs.LG OR cat:stat.ML OR cat:cs.AI OR cat:math.OC OR cat:cs.RO OR cat:cs.CL)
+  AND
+  (ti:"reinforcement learning" OR abs:"reinforcement learning"
+   OR ti:"Markov decision process" OR abs:"Markov decision process"
+   OR ti:"policy gradient" OR abs:"policy gradient"
+   OR ti:"actor-critic" OR abs:"actor-critic"
+   OR ti:"Q-learning" OR abs:"Q-learning"
+   OR ti:bandit OR abs:bandit)
+max_candidates: 200
+request_timeout: 30
+state_path: output/papers/state.sqlite3

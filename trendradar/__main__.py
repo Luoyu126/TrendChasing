@@ -63,6 +63,7 @@ class NewsAnalyzer:
 
         # 创建应用上下文
         self.ctx = AppContext(config)
+        self._paper_result = None
 
         self.request_interval = self.ctx.config["REQUEST_INTERVAL"]
         self.report_mode = self.ctx.config["REPORT_MODE"]
@@ -759,7 +760,7 @@ class NewsAnalyzer:
 
         # HTML生成（如果启用）— 使用翻译后的数据
         html_file = None
-        if self.ctx.config["STORAGE"]["FORMATS"]["HTML"]:
+        if self.ctx.config["STORAGE"]["FORMATS"]["HTML"] or self._paper_result is not None:
             display_regions = self.ctx.config.get("DISPLAY", {}).get("REGIONS", {})
             html_standalone = standalone_data if display_regions.get("STANDALONE", False) else None
             html_ai = ai_result if display_regions.get("AI_ANALYSIS", True) else None
@@ -777,6 +778,7 @@ class NewsAnalyzer:
                 standalone_data=html_standalone,
                 frequency_file=self.frequency_file,
                 report_metadata={
+                    "paper_recommendations": self._paper_result,
                     "hotlist_total": total_titles,
                     "platform_total": len(self.ctx.platform_ids),
                     "rss_matched_count": self._rss_matched_count,
@@ -812,7 +814,11 @@ class NewsAnalyzer:
         # 检查是否有有效内容（热榜或RSS）
         has_news_content = self._has_valid_content(stats, new_titles)
         has_rss_content = bool(rss_items and len(rss_items) > 0)
-        has_any_content = has_news_content or has_rss_content
+        has_paper_content = bool(self._paper_result and self._paper_result["papers"])
+        has_paper_email = has_paper_content and all(
+            cfg.get(key) for key in ("EMAIL_FROM", "EMAIL_PASSWORD", "EMAIL_TO")
+        )
+        has_any_content = has_news_content or has_rss_content or has_paper_email
 
         # 计算热榜匹配条数
         news_count = sum(len(stat.get("titles", [])) for stat in stats) if stats else 0
@@ -829,7 +835,10 @@ class NewsAnalyzer:
                 content_parts.append(f"热榜 {news_count} 条")
             if rss_count > 0:
                 content_parts.append(f"RSS {rss_count} 条")
-            total_count = news_count + rss_count
+            paper_count = len(self._paper_result["papers"]) if has_paper_content else 0
+            if paper_count:
+                content_parts.append(f"论文 {paper_count} 篇")
+            total_count = news_count + rss_count + paper_count
             print(f"[推送] 准备发送：{' + '.join(content_parts)}，合计 {total_count} 条")
 
             # 调度系统决策
@@ -873,19 +882,23 @@ class NewsAnalyzer:
             # 使用 NotificationDispatcher 发送到所有渠道
             # RSS/独立展示区数据已在分析流水线中翻译过，跳过重复翻译（仅翻译热榜 report_data）
             dispatcher = self.ctx.create_notification_dispatcher()
-            results = dispatcher.dispatch_all(
-                report_data=report_data,
-                report_type=report_type,
-                update_info=update_info_to_send,
-                proxy_url=self.proxy_url,
-                mode=mode,
-                html_file_path=html_file_path,
-                rss_items=rss_items,
-                rss_new_items=rss_new_items,
-                ai_analysis=ai_result,
-                standalone_data=standalone_data,
-                skip_translation=True,
-            )
+            if has_paper_email and not (has_news_content or has_rss_content):
+                # Paper-only digests belong to email; avoid empty news-channel pushes.
+                results = {"email": dispatcher._send_email(report_type, html_file_path)}
+            else:
+                results = dispatcher.dispatch_all(
+                    report_data=report_data,
+                    report_type=report_type,
+                    update_info=update_info_to_send,
+                    proxy_url=self.proxy_url,
+                    mode=mode,
+                    html_file_path=html_file_path,
+                    rss_items=rss_items,
+                    rss_new_items=rss_new_items,
+                    ai_analysis=ai_result,
+                    standalone_data=standalone_data,
+                    skip_translation=True,
+                )
 
             if not results:
                 print("未配置任何通知渠道，跳过通知发送")
@@ -1425,6 +1438,11 @@ class NewsAnalyzer:
         if not schedule.collect:
             print("[调度] 当前时间段不执行数据采集，跳过分析流水线")
             return None
+        from trendradar.papers.pipeline import daily_recommendations
+        self._paper_result = (
+            daily_recommendations(self.ctx.config, self.ctx.get_time())
+            if self.report_mode == "daily" else None
+        )
         # 获取当前监控平台ID列表
         current_platform_ids = self.ctx.platform_ids
 

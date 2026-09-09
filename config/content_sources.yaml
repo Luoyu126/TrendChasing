@@ -1,0 +1,32 @@
+# Paths are resolved relative to the repository, not the shell working directory.
+rsshub_url: http://127.0.0.1:1200
+database: output/content_pool/content.sqlite3
+timezone: America/New_York
+poll_interval_minutes: 30
+request_timeout_seconds: 120
+
+# Copy this file to content_sources.local.yaml for personal subscriptions.
+# An account is a 24-character user ID or a full profile URL.
+# No accounts are enabled by default.
+xiaohongshu:
+  accounts: []
+  # accounts:
+  #   - "https://www.xiaohongshu.com/user/profile/593032945e87e77791e03696"
+
+# Authored answers and articles; excludes likes and follows from activities.
+zhihu:
+  accounts: []
+  # accounts:
+  #   - "https://www.zhihu.com/people/su-jian-lin-22"
+
+twitter:
+  include_replies: false
+  include_retweets: true
+  accounts: []
+  # accounts:
+  #   - "https://x.com/karpathy"
+
+# Public Sogou RSSHub route; no Cookie required, coverage is not guaranteed.
+wechat:
+  accounts: []
+  # accounts: [almosthuman2014, qbitai]

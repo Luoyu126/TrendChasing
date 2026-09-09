@@ -1,0 +1,12 @@
+[Unit]
+Description=TrendRadar collect and screen content
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/chenyy/TrendRadar
+Environment=LITELLM_LOCAL_MODEL_COST_MAP=True
+ExecStart=/usr/bin/flock -w 3600 /home/chenyy/TrendRadar/output/content_pool/scheduler.lock /home/chenyy/TrendRadar/.venv/bin/python /home/chenyy/TrendRadar/scripts/run_content_daily.py
+TimeoutStartSec=6h
+UMask=0077

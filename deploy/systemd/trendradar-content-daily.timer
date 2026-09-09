@@ -1,0 +1,9 @@
+[Unit]
+Description=Send the daily digest at 08:00 Pittsburgh local time
+
+[Timer]
+OnCalendar=*-*-* 08:00:00 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -221,6 +221,11 @@ def generate_html_report(
         # 默认简单 HTML
         html_content = f"<html><body><h1>Report</h1><pre>{report_data}</pre></body></html>"
 
+    # Papers are appended after news filtering/translation and reused by email.
+    if mode == "daily" and report_metadata and report_metadata.get("paper_recommendations") is not None:
+        from trendradar.papers.render import append_section
+        html_content = append_section(html_content, report_metadata["paper_recommendations"])
+
     # 1. 保存时间戳快照（历史记录）
     with open(snapshot_file, "w", encoding="utf-8") as f:
         f.write(html_content)

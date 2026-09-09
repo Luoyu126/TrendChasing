@@ -1,0 +1,18 @@
+__pycache__/
+config/email.local.env
+config/ai.local.env
+*.py[cod]
+docker/rsshub.env
+config/content_sources.local.yaml
+output/content_pool/
+
+.venv/
+output/papers/
+
+
+docker/werss.env
+output/werss/
+
+# Independent, unmodified reference clones; see external/README.md.
+/external/Paper-Pulse/
+/external/we-mp-rss/

@@ -1,0 +1,33 @@
+# Unified content pipeline; sending is explicit via the runner or daily timer.
+db_path: output/content_pool/content.sqlite3
+papers_config: config/papers.yaml
+ai_config: config/config.yaml
+report_dir: output/content_pool/reports
+timezone: America/New_York
+email_link_mode: plain_address  # Keep HTML; show source addresses without http(s):// in email only.
+batch_size: 10
+input_limit: 30000             # Conservative UTF-8 byte estimate, not billed tokens
+run_input_budget: 200000
+run_call_budget: 100
+max_output_tokens: 3000
+summary_max_output_tokens: 8000  # Allow reasoning plus a complete multi-topic JSON response
+retries: 1
+max_topics: 6
+prompt_version: social-v1
+rules_version: clean-v1
+summary_version: topics-v1
+# Optional per-million-token pricing by model:
+# prices:
+#   provider/model:
+#     input_tokens: 1.0
+#     output_tokens: 2.0
+
+sources_config: config/content_sources.local.yaml
+
+min_request_interval: 30
+retry_delay: 60
+
+cooldown_seconds: 300
+
+# Previous local calendar day is primary; earlier undelivered content is labeled supplemental.
+daily_window: previous_day
