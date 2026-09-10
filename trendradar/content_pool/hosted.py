@@ -57,7 +57,7 @@ def run_daily(args, root):
                 return {'status': 'already_sent', 'date': window['date'], 'batch_id': existing[0]}
             if not existing:
                 processor.process()
-            message = notice(store, window['start'])
+            message = notice(store, window['start'], excluded_platforms=cfg.get('excluded_platforms', []))
             if cfg.get('sources_config'):
                 from scripts.collect_content import load_config, sources
                 expected = {sid for _, sid, _ in sources(load_config(cfg['sources_config'], args.config))}

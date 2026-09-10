@@ -21,7 +21,7 @@ from trendradar.papers.arxiv import fetch
 from trendradar.content_pool.paper_ingest import ingest_papers
 
 
-def notice(store, since, paper_failed=False, trial=False):
+def notice(store, since, paper_failed=False, trial=False, excluded_platforms=()):
     failures = {}
     rows = store.db.execute(
         """SELECT source_id,status,started_at FROM fetch_runs WHERE id IN (
@@ -30,6 +30,8 @@ def notice(store, since, paper_failed=False, trial=False):
     for row in rows:
         if row["status"] in ("failed", "interrupted", "running", "empty", "partial") or row["started_at"] < since:
             platform = row["source_id"].split(":")[0]
+            if platform in excluded_platforms:
+                continue
             failures[platform] = failures.get(platform, 0) + 1
     names = {"xiaohongshu": "小红书", "zhihu": "知乎", "twitter": "X", "wechat": "公众号"}
     parts = [f"{names.get(k, k)} {v} 个订阅" for k, v in sorted(failures.items())]

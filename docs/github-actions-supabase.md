@@ -9,7 +9,7 @@ push 或启用仓库变量。首次提交后定时 job 仍跳过，必须按下�
 用量、冷却、批次和回执；它不是运行驱动。本次新增 PostgreSQL 运行适配，使用原有
 `trendradar` schema 和表结构，保留 SQLite 本地模式及既有迁移工具，不做双向同步。
 
-2026-09-10 本地验证：现有 `supabase.local.env` 可建立 verify-full TLS 只读连接，但
+2026-09-10 初次本地验证：现有 `supabase.local.env` 可建立 verify-full TLS 只读连接，但
 `information_schema.tables` 中 `public` / `trendradar` 应用表列表为空。**这不能证明其他
 项目/凭据下没有迁移；应先核对目标项目、数据库和角色权限。没有改动远程数据库。**
 运行适配在找不到 `trendradar.records` 时返回 `supabase_import_required`，不会新建另一个库。
@@ -39,6 +39,19 @@ python scripts/sync_supabase.py --snapshot /path/to/reviewed.sqlite3 --execute
 要求人工核对，不会自行删除回执。旧批次若使用其他窗口，应在启用前人工核对该映射。
 连接角色应能读写并创建这些私有运行表；迁移工具已撤销匿名角色的 schema 权限。
 不要把该 schema 暴露给客户端或配置公共读取。
+
+## 2026-09-10 实际上线验证更新
+
+当前连接目标已完成迁移：21 张业务表、5,148 行，试导入逐表哈希核验后提交；
+同一快照再次执行返回 `already_imported`。真实 Supabase 运行连接、跨连接锁、
+事务读写回滚已通过；20 篇三平台内容重复入库两遍，身份数保持 1,214。
+Supabase 的 `extra_float_digits=0` 会截短浮点文本，已在迁移及运行连接上设置为 3，
+保证冷却时间与费用等值精确往返。
+
+按用户当前选择，`content_sources.actions.yaml` 中 `wechat.enabled=false`，暂停公众号
+采集、筛选和缺源提示，原订阅定义保留。恢复时设置为 true 并补齐外部 WeRSS 配置。
+手动采集工作流增加 `mode=smoke`：每个平台一个账号、五篇 arXiv 候选，另做真实内容
+重复入库回滚检查；`mode=full` 和小时调度仍处理全部已启用来源。
 
 ## Secrets 与 Variables
 

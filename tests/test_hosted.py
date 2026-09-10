@@ -81,6 +81,19 @@ class HostedTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'pending_collection'):
                 self.processor.resolve(item(), {'paper_title':'missing paper'})
 
+    def test_paused_wechat_is_not_processed_or_batched(self):
+        self.ingest(item(platform='wechat'))
+        self.meter.config['excluded_platforms'] = ['wechat']
+        self.processor.process()
+        self.assertEqual(self.count('pool_entries'), 0)
+        self.assertEqual(self.fake.calls, [])
+        self.meter.config['excluded_platforms'] = []
+        self.processor.process()
+        self.assertEqual(self.count('pool_entries'), 1)
+        self.meter.config['excluded_platforms'] = ['wechat']
+        b = self.digests.prepare(allow_empty=True)
+        self.assertEqual(json.loads(self.digests.get(b)['snapshot']), [])
+
     def test_old_receipts_adopted(self):
         b = self.digests.prepare(allow_empty=True)
         with self.store.db:
