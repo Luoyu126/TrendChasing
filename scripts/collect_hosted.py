@@ -53,14 +53,38 @@ def papers_collect(store, paper):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', default=str(ROOT / 'config/content_pool.yaml'))
+    parser.add_argument('--smoke', action='store_true', help='One account per platform, five arXiv candidates, verify idempotent re-ingestion')
     args = parser.parse_args()
     cfg, _, paper = configuration(ROOT, args.config)
     sources = load_config(cfg['sources_config'], args.config)
+    if args.smoke:
+        for key in ('accounts', 'zhihu_accounts', 'twitter_accounts'):
+            sources[key] = sources[key][:1]
+        paper = {**paper, 'max_candidates': 5}
+        sources['request_timeout_seconds'] = min(45, sources['request_timeout_seconds'])
     with run_lock(Path(cfg['db_path']).with_suffix('.run.lock')):
         store = Store(cfg['db_path'])
         try:
             failed = papers_collect(store, paper)
             failed += collect(store.db, sources)
+            if args.smoke:
+                from trendradar.content_pool.store import ingest, dumps
+                # Replay retained real payloads inside a rolled-back transaction.
+                # Re-ingestion must preserve the permanent identity row count.
+                count = store.db.execute('SELECT count(*) FROM records').fetchone()[0]
+                sample = [dict(r) for r in store.db.execute("SELECT * FROM items WHERE platform IN ('twitter','xiaohongshu','zhihu') ORDER BY last_seen_at DESC LIMIT 20")]
+                try:
+                    store.db.execute('BEGIN IMMEDIATE')
+                    for item in sample:
+                        source = store.db.execute('SELECT source_id FROM observations WHERE platform=? AND content_id=? LIMIT 1', (item['platform'],item['content_id'])).fetchone()
+                        if source:
+                            ingest(store.db, source[0], [item], now())
+                    after = store.db.execute('SELECT count(*) FROM records').fetchone()[0]
+                    if after != count:
+                        raise ValueError('duplicate_ingestion_created_identities')
+                finally:
+                    store.db.rollback()
+                print(dumps({'idempotency': 'passed' if sample else 'no_social_payload_to_test', 'replayed':len(sample), 'records_before':count, 'records_after':after}))
             print(json.dumps({'status': 'collected', 'failed_sources': failed}))
             return int(bool(failed))
         finally:

@@ -90,6 +90,8 @@ def sources(config):
     for account in config.get("twitter_accounts", []):
         yield "twitter", f"twitter:{account}", f"/twitter/user/{account}/includeReplies={replies}&includeRts={retweets}"
 
+    if not config.get("wechat", {}).get("enabled", True):
+        return
     for feed in config.get("wechat_feeds", []):
         yield "wechat", "wechat:" + feed["id"], feed["url"]
     for account in config.get("wechat_accounts", []):

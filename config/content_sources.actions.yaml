@@ -97,6 +97,7 @@ twitter:
 
 # 微信公众号：机器之心、量子位（搜狗公开入口）
 wechat:
+  enabled: false  # 暂停公众号，保留订阅以便之后恢复
   accounts: []
   feeds:
   - id: almosthuman2014

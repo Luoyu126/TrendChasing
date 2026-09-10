@@ -3,6 +3,12 @@ on:
   schedule:
     - cron: '34 * * * *'
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'smoke tests one account/platform; full collects all configured sources'
+        type: choice
+        options: [smoke, full]
+        default: smoke
 permissions:
   contents: read
 concurrency:
@@ -42,7 +48,12 @@ jobs:
           TWITTER_AUTH_TOKEN: ${{ secrets.TWITTER_AUTH_TOKEN }}
         run: docker compose -f docker/docker-compose.actions.yml up -d --wait --wait-timeout 240
       - name: Collect without AI or email
-        run: python scripts/collect_hosted.py --config output/hosted-config.yaml
+        env:
+          COLLECT_MODE: ${{ inputs.mode || 'full' }}
+        run: |
+          args=(--config output/hosted-config.yaml)
+          if [ "$COLLECT_MODE" = smoke ]; then args+=(--smoke); fi
+          python scripts/collect_hosted.py "${args[@]}"
       - name: Container status
         if: failure()
         run: docker compose -f docker/docker-compose.actions.yml ps -a

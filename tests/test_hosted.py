@@ -137,6 +137,7 @@ class ConfigurationTests(unittest.TestCase):
         from trendradar.content_pool.store import Store
         root = Path(__file__).resolve().parents[1]
         cfg = load_config(root / 'config/content_sources.actions.yaml')
+        cfg['wechat']['enabled'] = True
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {'WERSS_BASE_URL': ''}):
             store = Store(Path(tmp) / 'pool.db')
             try:
@@ -147,6 +148,13 @@ class ConfigurationTests(unittest.TestCase):
                 self.assertTrue(all(tuple(r)==('failed','external_werss_not_configured') for r in rows))
             finally:
                 store.close()
+
+    def test_disabled_wechat_keeps_config_without_fetching(self):
+        from scripts.collect_content import sources
+        root = Path(__file__).resolve().parents[1]
+        cfg = load_config(root / 'config/content_sources.actions.yaml')
+        self.assertEqual(len(cfg['wechat_feeds']), 3)
+        self.assertNotIn('wechat', {p for p, _, _ in sources(cfg)})
 
     def test_feed_retry_bounded(self):
         from urllib.error import URLError
