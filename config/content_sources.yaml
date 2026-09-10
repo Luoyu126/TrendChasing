@@ -1,6 +1,6 @@
 # Paths are resolved relative to the repository, not the shell working directory.
 rsshub_url: http://127.0.0.1:1200
-database: output/content_pool/content.sqlite3
+# Database comes from content_pool.yaml db_path; do not configure a second pool.
 timezone: America/New_York
 poll_interval_minutes: 30
 request_timeout_seconds: 120

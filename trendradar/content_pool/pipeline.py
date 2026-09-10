@@ -88,10 +88,11 @@ def chunks(text, size):
 class Processor:
     def __init__(self, store, meter, paper_config, resolver=None):
         self.store, self.meter, self.cfg = store, meter, papers.validate(paper_config)
-        self.state = State(self.cfg["state_path"])
+        self.state = State(connection=store.db)
         self.resolver = resolver or self.resolve
         self.owner = None
         self.last_request = 0
+        self.database_only = False
 
     def close(self):
         self.state.close()
@@ -231,6 +232,13 @@ class Processor:
                 "search_query": 'ti:"' + title.replace('"', "") + '"',
                 "max_results": 5,
             }
+        if self.database_only:
+            if not matches:
+                normalize = lambda s: re.sub(r"\W+", "", s.casefold())
+                known = [p for p in self.state.papers() if normalize(p.title) == normalize(title)]
+                if len(known) == 1:
+                    return known[0]
+            raise ValueError("paper_metadata_pending_collection")
         for attempt in range(self.meter.config["retries"] + 1):
             time.sleep(max(0, 3 - (time.monotonic() - self.last_request)))
             self.last_request = time.monotonic()
@@ -302,7 +310,7 @@ class Processor:
     def fingerprint(self):
         return digest(
             [
-                self.cfg,
+                {k: v for k, v in self.cfg.items() if k != "state_path"},
                 {k: v for k, v in self.meter.ai.items() if k != "API_KEY"},
                 self.meter.config["prompt_version"],
                 self.meter.config["rules_version"],
@@ -332,7 +340,7 @@ class Processor:
             from .store import now
             from .window import position, previous_day
 
-            window = previous_day(now(), self.meter.config["timezone"])
+            window = self.meter.config.get("business_window") or previous_day(now(), self.meter.config["timezone"])
             candidates = [
                 r
                 for r in candidates
@@ -362,6 +370,12 @@ class Processor:
                 )
             if item["platform"] == "paper":
                 try:
+                    if self.store.db.execute(
+                        "SELECT 1 FROM work_records WHERE id=? AND status='delivered'",
+                        (item["content_id"],),
+                    ).fetchone():
+                        self.store.reject(item, "paper_already_delivered", "duplicate")
+                        continue
                     candidates = [
                         p
                         for p in self.state.papers()
@@ -507,7 +521,7 @@ class Processor:
                 "body_text": paper.abstract,
                 "published_at": paper.published,
                 "quality_flags": "[]",
-                "raw_entry": "",
+                "raw_entry": dumps(paper.to_dict()),
             }
             existed = self.store.db.execute(
                 "SELECT 1 FROM records WHERE platform=? AND content_id=?",

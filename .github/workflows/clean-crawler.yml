@@ -12,6 +12,7 @@ on:
 
 jobs:
   del_runs:
+    if: vars.LEGACY_CRAWLER_ENABLED == 'true'
     runs-on: ubuntu-latest
     permissions:
       actions: write

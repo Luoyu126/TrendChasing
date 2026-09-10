@@ -1,0 +1,2 @@
+# PostgreSQL runtime and initial SQLite -> Supabase import.
+psycopg[binary]==3.3.4

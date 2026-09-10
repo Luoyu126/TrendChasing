@@ -1,3 +1,5 @@
+> GitHub 托管部署使用 [Actions + Supabase 独立入口](github-actions-supabase.md)；本文的本机定时、SQLite 与旧热榜入口说明不用于托管调度。
+
 # 微信公众号采集
 
 使用已有 RSSHub 的 `/wechat/sogou/:id` 公开搜狗入口，不需要 Cookie。
@@ -52,3 +54,19 @@ wechat:
 本机源地址：`/feed/MP_WXS_3073282833.xml`（机器之心）、
 `/feed/MP_WXS_3236757533.xml`（量子位）、`/feed/MP_WXS_3271041950.xml`（新智元）。
 读取 RSS 只读取 WeRSS 已存文章，不等于刷新微信文章列表；后续需配置更新任务。
+
+## 当前可用通道：微信读书
+
+微信公众平台凭据有效，但文章接口实测返回 `200013 / freq control`。
+已改用 WeRSS 内置微信读书授权，三个公众号各验证采集到一篇正文并写入内容池。
+采集器按 `refresh_werss: true` 先调用微信读书采集接口，再读取 RSS，
+使用 `credentials_file: docker/werss.env` 的本地管理凭据。
+
+该版本只提供每个公众号最新一篇，无法回补历史列表，多篇连发可能漏掉。
+其 RSS 发布日期实际来自抓取时间，因此本地配置设置 `trust_published_at: false`，
+入库时清空发布日期并标记 `missing_published_at`（状态 partial），不伪装为当日发布文章。
+正文和原文链接已保留，但日期筛选无法使用这些未核实日期的条目。
+
+已启用用户级 `trendradar-wechat-collect.timer`，每 30 分钟刷新并入库，
+只运行公众号采集；用户 Linger 已开启。首次 systemd 任务已验证退出码 0。
+使用 `systemctl --user list-timers trendradar-wechat-collect.timer` 查看下次执行时间。

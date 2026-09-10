@@ -1,3 +1,5 @@
+> GitHub 托管部署使用 [Actions + Supabase 独立入口](github-actions-supabase.md)；本文的本机定时、SQLite 与旧热榜入口说明不用于托管调度。
+
 # Paper recommendations
 
 The optional `trendradar.papers` branch discovers arXiv papers, scores their complete
@@ -54,10 +56,14 @@ within the lookback window; there is no separate delivery ledger in this version
 
 ## State and failure behavior
 
-`state_path` defaults to `output/papers/state.sqlite3`, separate from all news/RSS
-and social content stores. Relative paths are relative to the working directory.
-Keep this directory on persistent storage (including a volume for Docker). Stateless
-CI runners must restore/persist it themselves; the news remote backend does not sync it.
+The default database is selected by `config/content_pool.yaml` (`db_path`), shared
+with social and WeRSS candidates, digest batches, and delivery records. Paper metadata
+and scoring caches use the `papers` and `judgments` tables in this database.
+Raw arXiv candidates enter the pool before screening; filtered and failed candidates
+remain available for reconsideration or retries. An explicit `state_path` is still
+supported for isolated standalone previews; the unified processor always uses its pool
+connection. Existing installations should follow the [local migration](unified-database.md).
+The legacy news remote backend does not synchronize this database.
 
 Candidates are deduplicated by canonical arXiv ID, with the highest version retained.
 All authors, categories, dates, links and complete abstracts are preserved. Judgments

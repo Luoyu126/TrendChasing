@@ -34,3 +34,11 @@ def position(stamp, window):
     return (
         "supplement" if value < datetime.fromisoformat(window["start"]) else "primary"
     )
+
+
+def for_date(day, zone):
+    """Explicit content date, independent of schedule arrival/run timestamp."""
+    from datetime import date
+    value = date.fromisoformat(day)
+    stamp = datetime.combine(value + timedelta(days=1), time.min, ZoneInfo(zone))
+    return previous_day(stamp, zone)

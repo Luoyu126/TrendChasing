@@ -21,7 +21,7 @@ DEFAULTS = {
     "arxiv_query": "cat:cs.AI OR cat:cs.LG",
     "max_candidates": 200,
     "request_timeout": 30,
-    "state_path": "output/papers/state.sqlite3",
+    "state_path": "output/content_pool/content.sqlite3",
 }
 
 
@@ -74,4 +74,11 @@ def load(path):
         raw = yaml.safe_load(source) or {}
     if not isinstance(raw, dict):
         raise ValueError("paper configuration must be a mapping")  # noqa: TRY004 - unified configuration validation
+    # The sibling pool config is authoritative unless a standalone fixture uses
+    # an explicit isolated state_path. Paths are repository-relative.
+    if "state_path" not in raw:
+        pool_path = Path(path).resolve().with_name("content_pool.yaml")
+        if pool_path.exists():
+            pool = yaml.safe_load(pool_path.read_text())
+            raw["state_path"] = str((pool_path.parent.parent / pool["db_path"]).resolve())
     return validate(raw)

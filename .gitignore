@@ -1,6 +1,7 @@
 __pycache__/
 config/email.local.env
 config/ai.local.env
+config/supabase.local.env
 *.py[cod]
 docker/rsshub.env
 config/content_sources.local.yaml
@@ -16,3 +17,6 @@ output/werss/
 # Independent, unmodified reference clones; see external/README.md.
 /external/Paper-Pulse/
 /external/we-mp-rss/
+
+# Generated databases, migration backups and provider diagnostics stay local.
+/output/

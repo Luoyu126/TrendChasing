@@ -1,9 +1,24 @@
-"""Separate SQLite content and judgments; failed attempts are never cache hits."""
+"""Paper metadata and judgments in the content database; failures are not hits."""
 
 import hashlib
 import json
 import sqlite3
 from pathlib import Path
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS papers (
+    id TEXT PRIMARY KEY, version INTEGER NOT NULL, content TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS judgments (
+    cache_key TEXT PRIMARY KEY, status TEXT NOT NULL,
+    result TEXT, attempts INTEGER NOT NULL DEFAULT 1, error TEXT);
+"""
+
+
+def initialize(db):
+    # executescript would implicitly commit a caller's active transaction.
+    for statement in SCHEMA.split(";"):
+        if statement.strip():
+            db.execute(statement)
 
 
 def digest(value):
@@ -15,16 +30,13 @@ def digest(value):
 
 
 class State:
-    def __init__(self, path):
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(path, timeout=30)
-        self.db.executescript("""
-            CREATE TABLE IF NOT EXISTS papers (
-                id TEXT PRIMARY KEY, version INTEGER NOT NULL, content TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS judgments (
-                cache_key TEXT PRIMARY KEY, status TEXT NOT NULL,
-                result TEXT, attempts INTEGER NOT NULL DEFAULT 1, error TEXT);
-        """)
+    def __init__(self, path=None, *, connection=None):
+        self.owns_connection = connection is None
+        if connection is None:
+            from trendradar.content_pool.store import open_database
+            self.db = open_database(path)
+        else:
+            self.db = connection
 
     def save_papers(self, papers):
         with self.db:
@@ -65,4 +77,5 @@ class State:
             )
 
     def close(self):
-        self.db.close()
+        if self.owns_connection:
+            self.db.close()

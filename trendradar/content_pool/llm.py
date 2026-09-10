@@ -64,7 +64,7 @@ class Meter:
         ):
             raise ValueError("invalid_summary_output_limit")
         self.factory = factory
-        self.run_id = uuid.uuid4().hex
+        self.run_id = digest(["daily-budget", self.config["report_date"]]) if self.config.get("report_date") else uuid.uuid4().hex
         self.calls = self.inputs = 0
         self.client = None
         self.group = digest([ai.get("API_BASE"), ai.get("API_KEY")])
@@ -75,6 +75,12 @@ class Meter:
             "CREATE TABLE IF NOT EXISTS llm_backoff (quota_group TEXT PRIMARY KEY,failures INTEGER NOT NULL)"
         )
         self.store.db.commit()
+        if self.config.get("report_date"):
+            row = self.store.db.execute(
+                "SELECT count(*),COALESCE(sum(estimated_input),0) FROM usage_events WHERE run_id=? AND event='request_started'",
+                (self.run_id,),
+            ).fetchone()
+            self.calls, self.inputs = row[0], row[1]
 
     def model(self, stage):
         return self.ai.get("MODEL", "deepseek/deepseek-chat")
@@ -170,6 +176,9 @@ class Meter:
                     self.client = factory(
                         {**self.ai, "NUM_RETRIES": 0, "FALLBACK_MODELS": []}
                     )
+                # Reserve budget durably before calling the provider. On a crash,
+                # an uncertain request still consumes this business day's budget.
+                self.event(stage, "request_started", estimate, attempt=attempt + _retry)
                 self.calls += 1
                 self.inputs += estimate
                 try:

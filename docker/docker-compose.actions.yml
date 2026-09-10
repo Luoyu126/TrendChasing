@@ -1,0 +1,30 @@
+services:
+  rsshub:
+    build:
+      context: ../external/RSSHub
+      args:
+        PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "0"
+    ports:
+      - "127.0.0.1:1200:1200"
+    environment:
+      NODE_ENV: production
+      CACHE_TYPE: redis
+      REDIS_URL: redis://redis:6379/
+      XIAOHONGSHU_COOKIE: ${XIAOHONGSHU_COOKIE:-}
+      ZHIHU_COOKIES: ${ZHIHU_COOKIES:-}
+      TWITTER_AUTH_TOKEN: ${TWITTER_AUTH_TOKEN:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, curl, -fsS, --max-time, "5", http://localhost:1200/healthz]
+      interval: 10s
+      timeout: 6s
+      retries: 18
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 12

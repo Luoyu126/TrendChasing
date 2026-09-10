@@ -1,0 +1,68 @@
+name: Morning Content Digest
+on:
+  schedule:
+    - cron: '34 7 * * *'
+      timezone: America/New_York
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'Content date YYYY-MM-DD; empty = previous New York calendar day'
+        required: false
+        type: string
+      mode:
+        description: 'Preview never sends or acknowledges deliveries'
+        type: choice
+        options: [preview, send]
+        default: preview
+permissions:
+  contents: read
+concurrency:
+  group: content-supabase
+  cancel-in-progress: false
+jobs:
+  daily:
+    if: github.event_name == 'workflow_dispatch' || vars.CONTENT_SCHEDULE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      CONTENT_DATABASE_BACKEND: supabase
+      SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+      AI_API_KEY: ${{ secrets.AI_API_KEY }}
+      AI_MODEL: ${{ vars.AI_MODEL }}
+      AI_API_BASE: ${{ vars.AI_API_BASE }}
+      AI_TIMEOUT: '90'
+      EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+      EMAIL_TO: ${{ secrets.EMAIL_TO }}
+      EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+      EMAIL_SMTP_SERVER: ${{ vars.EMAIL_SMTP_SERVER }}
+      EMAIL_SMTP_PORT: ${{ vars.EMAIL_SMTP_PORT || '465' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install . -r requirements-supabase.txt
+      - name: Configure runner
+        run: python scripts/configure_hosted.py
+      - name: Preview or deliver from database
+        env:
+          REPORT_DATE: ${{ inputs.date }}
+          REPORT_MODE: ${{ inputs.mode || 'send' }}
+          SEND_ENABLED: ${{ vars.CONTENT_SEND_ENABLED }}
+        shell: bash
+        run: |
+          args=(--config output/hosted-config.yaml --database-only)
+          if [ -n "$REPORT_DATE" ]; then args+=(--date "$REPORT_DATE"); fi
+          if [ "$REPORT_MODE" = send ]; then
+            if [ "$SEND_ENABLED" != true ]; then
+              echo 'Sending is disabled. Set CONTENT_SEND_ENABLED=true after preview review.'
+              exit 1
+            fi
+            args+=(--send)
+          else
+            args+=(--dry-run)
+          fi
+          python scripts/run_content_daily.py "${args[@]}"

@@ -115,6 +115,8 @@ def deliver(digests, batch_id, send=smtp_send, cleanup=True):
         body = render(report, digests.meter.config.get("timezone", "Asia/Shanghai"), mode)
     else:
         body = (digests.report_dir / (batch_id + ".html")).read_text()
+    from .store import now
+
     db = digests.store.db
     rows = list(db.execute("SELECT * FROM deliveries WHERE batch_id=?", (batch_id,)))
     if not rows:
@@ -133,6 +135,9 @@ def deliver(digests, batch_id, send=smtp_send, cleanup=True):
         .astimezone(ZoneInfo(digests.meter.config.get("timezone", "Asia/Shanghai")))
         .strftime("%Y-%m-%d")
     )
+    window = digests.store.cache_get("window:" + batch_id)
+    if window:
+        day = window["date"]
     for row in rows:
         target = row["target"]
         if not target.startswith("email:"):
@@ -148,7 +153,14 @@ def deliver(digests, batch_id, send=smtp_send, cleanup=True):
             continue
         if row["state"] in ("success", "uncertain"):
             continue
-        digests.acknowledge(batch_id, target, row["part"], "sending")
+        # Commit the claim before SMTP. A lost result leaves sending/uncertain.
+        with db:
+            claimed = db.execute(
+                "UPDATE deliveries SET state='sending',updated_at=? WHERE batch_id=? AND target=? AND part=? AND state IN ('pending','failed')",
+                (now(), batch_id, target, row["part"]),
+            ).rowcount
+        if claimed != 1:
+            continue
         from .store import digest
 
         domain = os.environ["EMAIL_FROM"].rsplit("@", 1)[-1]

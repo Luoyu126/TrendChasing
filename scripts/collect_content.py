@@ -7,6 +7,7 @@ Only PyYAML (already a project dependency) is required beyond the stdlib.
 import argparse
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -26,6 +27,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from trendradar.content_pool.store import open_database, ingest, scrub_responses
+from trendradar.content_pool.runtime import run_lock
 MAX_FEED_BYTES = 10 * 1024 * 1024
 NOTE_PATH = re.compile(r"/(?:explore|discovery/item)/([0-9a-f]{24})(?:/|$)", re.I)
 
@@ -117,7 +119,7 @@ def content_id_from_url(url, platform):
             biz, mid, idx = (query.get(k, [""])[0] for k in ("__biz", "mid", "idx"))
             if biz and mid.isdigit() and idx.isdigit():
                 return f"article:{biz}:{mid}:{idx}"
-        match = re.fullmatch(r"/s/([A-Za-z0-9_-]+)/?", parsed.path)
+        match = re.fullmatch(r"/s/([A-Za-z0-9_~-]+)/?", parsed.path)
         if match:
             return "short:" + match[1]
     elif platform == "twitter":
@@ -127,7 +129,7 @@ def content_id_from_url(url, platform):
     return None
 
 
-def load_config(path):
+def load_config(path, pool_config=ROOT / "config/content_pool.yaml"):
     with Path(path).open(encoding="utf-8") as stream:
         config = yaml.safe_load(stream)
     ZoneInfo(config["timezone"])
@@ -145,11 +147,20 @@ def load_config(path):
             raise ValueError("wechat.feeds.url 须为无凭据、无片段的 HTTP(S) RSS 地址")
         if feed["id"] in feed_ids or feed["id"] in config["wechat_accounts"]:
             raise ValueError("微信公众号订阅 id 不能重复")
+        for option in ("refresh_werss", "trust_published_at"):
+            if option in feed and not isinstance(feed[option], bool):
+                raise ValueError(f"wechat.feeds.{option} 必须为布尔值")
         feed_ids.add(feed["id"])
     for key in ("include_replies", "include_retweets"):
         if key in config.get("twitter", {}) and not isinstance(config["twitter"][key], bool):
             raise ValueError(f"twitter.{key} 必须是 YAML 布尔值 true 或 false")
-    config["database"] = ROOT / config["database"]
+    with Path(pool_config).open(encoding="utf-8") as stream:
+        pool = yaml.safe_load(stream)
+    database = (ROOT / pool["db_path"]).resolve()
+    if "database" in config and (ROOT / config["database"]).resolve() != database:
+        raise ValueError("source_database_must_match_content_pool")
+    config["database"] = database
+    config["rsshub_url"] = os.environ.get("RSSHUB_URL") or config["rsshub_url"]
     base = urlsplit(config["rsshub_url"])
     if base.scheme not in {"http", "https"} or not base.hostname or base.query or base.fragment or base.username:
         raise ValueError("rsshub_url 必须是无凭据、查询参数和片段的 HTTP(S) 服务地址")
@@ -178,7 +189,7 @@ def plain_text(body):
     return " ".join(" ".join(parser.parts).split())
 
 
-def parse_feed(raw, source_id, platform="xiaohongshu"):
+def parse_feed(raw, source_id, platform="xiaohongshu", trust_published_at=True):
     # RSSHub emits RSS 2.0 by default. Preserve raw XML alongside extracted fields.
     root = ET.fromstring(raw)
     if root.tag != "rss" or root.find("channel") is None:
@@ -204,6 +215,8 @@ def parse_feed(raw, source_id, platform="xiaohongshu"):
                 published = stamp.astimezone(timezone.utc).isoformat()
         except (ValueError, TypeError, OverflowError):
             pass
+        if not trust_published_at:
+            published = None
         if published is None:
             flags.append("missing_published_at")
         if not text or (platform != "twitter" and text == plain_text(title)):
@@ -222,17 +235,30 @@ def save_items(db, source_id, items, stamp):
 
 
 def download(url, timeout):
-    request = Request(url, headers={"User-Agent": "TrendRadar-ContentPool/1.0", "Accept": "application/rss+xml"})
-    with urlopen(request, timeout=timeout) as response:
-        raw = response.read(MAX_FEED_BYTES + 1)
-    if len(raw) > MAX_FEED_BYTES:
-        raise ValueError("RSS 响应超过 10 MiB 上限")
-    return raw
+    for attempt in range(3):
+        try:
+            request = Request(url, headers={"User-Agent": "TrendRadar-ContentPool/1.0", "Accept": "application/rss+xml"})
+            with urlopen(request, timeout=timeout) as response:
+                raw = response.read(MAX_FEED_BYTES + 1)
+            if len(raw) > MAX_FEED_BYTES:
+                raise ValueError("RSS response exceeds 10 MiB")
+            return raw
+        except (HTTPError, URLError, TimeoutError, OSError) as exc:
+            retryable = not isinstance(exc, HTTPError) or exc.code == 429 or exc.code >= 500
+            if isinstance(exc, HTTPError):
+                exc.close()
+            if attempt == 2 or not retryable:
+                raise
+            time.sleep(2 ** attempt)
 
 
 def collect(db, config, fetch=download, platform=None, resume=False):
     failures = 0
-    for source_platform, source_id, route in sources(config):
+    previous_runs = {r["source_id"]: r["started_at"] for r in db.execute(
+        "SELECT source_id,max(started_at) AS started_at FROM fetch_runs GROUP BY source_id")}
+    # After runner timeout, start with least recently attempted sources next time.
+    ordered = list(sources(config)) if resume else sorted(sources(config), key=lambda s: previous_runs.get(s[1], ""))
+    for source_platform, source_id, route in ordered:
         if platform and source_platform != platform:
             continue
         if resume:
@@ -246,8 +272,23 @@ def collect(db, config, fetch=download, platform=None, resume=False):
         raw = None
         try:
             url = route if urlsplit(route).scheme in {"http", "https"} else config["rsshub_url"].rstrip("/") + route
+            feed_config = next((f for f in config.get("wechat_feeds", []) if source_id == "wechat:" + f["id"]), {}) if source_platform == "wechat" else {}
+            if feed_config.get("external_werss", False):
+                base = os.environ.get("WERSS_BASE_URL", "").rstrip("/")
+                if not base:
+                    raise ValueError("external_werss_not_configured")
+                parsed = urlsplit(base)
+                if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.query or parsed.fragment:
+                    raise ValueError("external_werss_https_base_required")
+                url = base + urlsplit(route).path
+            if feed_config.get("refresh_werss", False):
+                from scripts.werss_source import refresh_feed
+                refresh_feed(feed_config, ROOT / config["wechat"]["credentials_file"], config["request_timeout_seconds"])
             raw = fetch(url, config["request_timeout_seconds"])
-            items = parse_feed(raw, source_id, source_platform)
+            items = parse_feed(raw, source_id, source_platform, trust_published_at=feed_config.get("trust_published_at", True))
+            for item in items:
+                if not item["author"] and feed_config.get("name"):
+                    item["author"] = feed_config["name"]
             flagged = sum(bool(json.loads(item["quality_flags"])) for item in items)
             status = "empty" if not items else "partial" if flagged else "success"
             with db:
@@ -264,7 +305,7 @@ def collect(db, config, fetch=download, platform=None, resume=False):
         except (HTTPError, URLError, TimeoutError, OSError, ValueError, ET.ParseError) as exc:
             failures += 1
             # Do not copy server error pages, request tokens, or cookies into logs.
-            error = f"HTTP {exc.code}" if isinstance(exc, HTTPError) else type(exc).__name__
+            error = f"HTTP {exc.code}" if isinstance(exc, HTTPError) else (str(exc) if str(exc) in {"external_werss_not_configured", "external_werss_https_base_required"} else type(exc).__name__)
             if isinstance(exc, HTTPError):
                 exc.close()
             with db:
@@ -286,6 +327,7 @@ def daily_items(db, day, zone):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=ROOT / "config/content_sources.yaml")
+    parser.add_argument("--pool-config", type=Path, default=ROOT / "config/content_pool.yaml")
     commands = parser.add_subparsers(dest="command", required=True)
     poll = commands.add_parser("collect", help="抓取全部配置账号；不做分类或推送")
     poll.add_argument("--watch", action="store_true", help="按配置间隔持续轮询，Ctrl-C 停止")
@@ -297,7 +339,7 @@ def main():
     args = parser.parse_args()
     if args.command == "collect" and args.resume and args.watch:
         parser.error("--resume 仅用于补采，请不要与 --watch 同用")
-    config = load_config(args.config)
+    config = load_config(args.config, args.pool_config)
     if args.command == "collect" and not any(not args.platform or p == args.platform for p, _, _ in sources(config)):
         parser.error("所选平台尚未配置账号；请填写对应的 accounts 列表")
     db = connect(config["database"])
@@ -313,7 +355,8 @@ def main():
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:
             while True:
-                failed = collect(db, config, platform=args.platform, resume=args.resume)
+                with run_lock(config["database"].with_suffix(".run.lock")):
+                    failed = collect(db, config, platform=args.platform, resume=args.resume)
                 if not args.watch:
                     return 1 if failed else 0
                 time.sleep(config["poll_interval_minutes"] * 60)

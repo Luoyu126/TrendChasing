@@ -1,10 +1,32 @@
 """Local persistence. Payloads are disposable; identities and receipts are not."""
 
 import hashlib
+import contextlib
 import json
 import sqlite3
+import os
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
+
+
+@contextlib.contextmanager
+def atomic(db):
+    """A nestable transaction that never commits its caller's transaction."""
+    owns = hasattr(db, "connection") and not db.in_transaction
+    name = "pool_" + uuid4().hex
+    db.execute("SAVEPOINT " + name)
+    try:
+        yield
+        db.execute("RELEASE " + name)
+        if owns:
+            db.commit()
+    except BaseException:
+        db.execute("ROLLBACK TO " + name)
+        db.execute("RELEASE " + name)
+        if owns:
+            db.rollback()
+        raise
 
 
 def now():
@@ -77,6 +99,12 @@ CREATE TABLE IF NOT EXISTS artifacts (
 
 
 def open_database(path):
+    backend = os.environ.get("CONTENT_DATABASE_BACKEND", "sqlite")
+    if backend == "supabase":
+        from .postgres import open_postgres
+        return open_postgres()
+    if backend != "sqlite":
+        raise ValueError("unknown_content_database_backend")
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path, timeout=30)
@@ -140,12 +168,20 @@ def open_database(path):
             raise
     db.execute("PRAGMA foreign_keys=ON")
     db.execute("PRAGMA journal_mode=WAL")
+    from trendradar.papers.state import initialize
+
+    with db:
+        initialize(db)
     path.chmod(0o600)
     return db
 
 
 def payload_hash(item):
-    return digest([item["title"], item["body_text"], item["body_html"]])
+    value = [item["title"], item["body_text"], item["body_html"]]
+    if item["platform"] == "paper":
+        # Version/authors/categories affect scoring even if the abstract is unchanged.
+        value.append(item["raw_entry"])
+    return digest(value)
 
 
 def ingest(db, source_id, items, stamp):
@@ -221,6 +257,7 @@ def scrub_responses(db):
 class Store:
     def __init__(self, path):
         self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         self.db = open_database(path)
 
     def close(self):
@@ -261,7 +298,7 @@ class Store:
     def cache_put(self, key, stage, result):
         with self.db:
             self.db.execute(
-                "INSERT OR REPLACE INTO analysis_cache VALUES (?,?,?,?)",
+                "INSERT INTO analysis_cache VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET stage=excluded.stage,result=excluded.result,created_at=excluded.created_at",
                 (key, stage, dumps(result), now()),
             )
 
@@ -349,7 +386,7 @@ class Store:
                 (entry_id, category, dumps(payload), item["history"], now()),
             )
             self.db.execute(
-                "INSERT OR REPLACE INTO entry_sources VALUES (?,?,?,?)",
+                "INSERT INTO entry_sources VALUES (?,?,?,?) ON CONFLICT(entry_id,platform,content_id) DO UPDATE SET insight=excluded.insight",
                 (entry_id, item["platform"], item["content_id"], insight),
             )
             self.db.execute(
@@ -387,6 +424,18 @@ class Store:
 
     def stats(self):
         return {
+            "database": "supabase:trendradar" if hasattr(self.db, "connection") else str(self.path.resolve()),
+            "platforms": [
+                dict(r) for r in self.db.execute("""SELECT r.platform,r.status,r.history,
+                count(*) AS count,
+                sum(CASE WHEN i.content_id IS NOT NULL AND i.published_at IS NULL THEN 1 ELSE 0 END) AS undated
+                FROM records r LEFT JOIN items i USING(platform,content_id)
+                GROUP BY r.platform,r.status,r.history""")
+            ],
+            "paper_state": {
+                "papers": self.db.execute("SELECT count(*) FROM papers").fetchone()[0],
+                "judgments": self.db.execute("SELECT count(*) FROM judgments").fetchone()[0],
+            },
             "records": [
                 dict(r)
                 for r in self.db.execute(

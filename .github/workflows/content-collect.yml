@@ -1,0 +1,51 @@
+name: Collect Content
+on:
+  schedule:
+    - cron: '34 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: content-supabase
+  cancel-in-progress: false
+jobs:
+  collect:
+    if: github.event_name == 'workflow_dispatch' || vars.CONTENT_SCHEDULE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      CONTENT_DATABASE_BACKEND: supabase
+      SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+      CONTENT_SOURCES_CONFIG: ${{ vars.CONTENT_SOURCES_CONFIG }}
+      WERSS_BASE_URL: ${{ secrets.WERSS_BASE_URL }}
+      RSSHUB_URL: http://127.0.0.1:1200
+      COMPOSE_PROJECT_NAME: trendradar-collect
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install . -r requirements-supabase.txt
+      - name: Configure runner
+        run: python scripts/configure_hosted.py
+      - name: Build custom RSSHub with Chromium
+        timeout-minutes: 20
+        run: docker compose -f docker/docker-compose.actions.yml build rsshub
+      - name: Start temporary RSSHub and Redis
+        env:
+          XIAOHONGSHU_COOKIE: ${{ secrets.XIAOHONGSHU_COOKIE }}
+          ZHIHU_COOKIES: ${{ secrets.ZHIHU_COOKIES }}
+          TWITTER_AUTH_TOKEN: ${{ secrets.TWITTER_AUTH_TOKEN }}
+        run: docker compose -f docker/docker-compose.actions.yml up -d --wait --wait-timeout 240
+      - name: Collect without AI or email
+        run: python scripts/collect_hosted.py --config output/hosted-config.yaml
+      - name: Container status
+        if: failure()
+        run: docker compose -f docker/docker-compose.actions.yml ps -a
+      - name: Remove temporary containers and volumes
+        if: always()
+        run: docker compose -f docker/docker-compose.actions.yml down --volumes --remove-orphans --timeout 15

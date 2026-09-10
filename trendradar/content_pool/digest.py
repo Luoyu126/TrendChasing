@@ -26,10 +26,16 @@ class Digests:
         if self.meter.config.get("daily_window") == "previous_day" and not history:
             from .window import position, previous_day
 
-            window = previous_day(now(), self.meter.config["timezone"])
+            window = self.meter.config.get("business_window") or previous_day(now(), self.meter.config["timezone"])
         try:
             db.execute("BEGIN IMMEDIATE")
-            existing = db.execute(
+            report_date = self.meter.config.get("report_date")
+            if report_date:
+                existing = db.execute("SELECT batch_id FROM digest_days WHERE day=?", (report_date,)).fetchone()
+                if existing:
+                    db.commit()
+                    return existing[0]
+            existing = None if report_date else db.execute(
                 "SELECT id FROM batches WHERE history=? AND status IN ('prepared','ready') ORDER BY created_at LIMIT 1",
                 (int(history),),
             ).fetchone()
@@ -87,6 +93,8 @@ class Digests:
                 .date()
                 == today
             )
+            if report_date:
+                used = 0  # one immutable batch per business date, including backfills
             rows = high + low[: max(0, self.cfg["daily_output_limit"] - used)]
             if not rows and not allow_empty:
                 raise ValueError("no_eligible_content")
@@ -135,12 +143,14 @@ class Digests:
                 "INSERT INTO batches VALUES (?,?,?,?,?,NULL,NULL)",
                 (batch_id, stamp, int(history), "prepared", dumps(snapshot)),
             )
+            if report_date:
+                db.execute("INSERT INTO digest_days(day,batch_id) VALUES (?,?)", (report_date, batch_id))
+            # Window/notice must commit with the immutable batch, so a crash
+            # cannot lose its business date or collection diagnostics.
+            for key, stage, value in (("window:" + batch_id, "window", window), ("notice:" + batch_id, "notice", notice)):
+                db.execute("INSERT OR IGNORE INTO cache_owners VALUES (?,?)", (key, "batch:" + batch_id))
+                db.execute("INSERT INTO analysis_cache VALUES (?,?,?,?) ON CONFLICT(key) DO NOTHING", (key, stage, dumps(value), now()))
             db.commit()
-            if window:
-                self.store.own_cache("window:" + batch_id, "batch:" + batch_id)
-                self.store.cache_put("window:" + batch_id, "window", window)
-            self.store.own_cache("notice:" + batch_id, "batch:" + batch_id)
-            self.store.cache_put("notice:" + batch_id, "notice", notice)
             return batch_id
         except BaseException:
             db.rollback()
@@ -431,12 +441,12 @@ class Digests:
             raise
         for value in paths:
             path = Path(value)
-            if path.parent.resolve() != self.report_dir or path.name not in (
-                batch_id + ".json",
-                batch_id + ".html",
+            # Other runners may have different checkout directories. Their
+            # disposable files must never be accessed on this machine.
+            if path.parent.resolve() == self.report_dir and path.name in (
+                batch_id + ".json", batch_id + ".html",
             ):
-                raise ValueError("unsafe_artifact_path")
-            path.unlink(missing_ok=True)
+                path.unlink(missing_ok=True)
             with db:
                 db.execute(
                     "DELETE FROM artifacts WHERE batch_id=? AND path=?",

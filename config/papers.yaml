@@ -91,4 +91,4 @@ arxiv_query: >-
    OR ti:bandit OR abs:bandit)
 max_candidates: 200
 request_timeout: 30
-state_path: output/papers/state.sqlite3
+# Database comes from content_pool.yaml db_path (also used by RSS and WeRSS).

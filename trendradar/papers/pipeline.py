@@ -4,6 +4,7 @@ import json
 import logging
 import math
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from .arxiv import date, fetch
 from .config import load, validate
@@ -91,62 +92,69 @@ def run(cfg, ai_config, *, papers=None, client=None, now=None):
     if now.tzinfo is None:
         raise ValueError("now must include a timezone")
     now = now.astimezone(UTC)
-    state = State(cfg["state_path"])
-    errors = []
-    try:
-        if papers is None:
-            try:
-                papers = fetch(cfg, now)
-            except Exception as exc:  # noqa: BLE001 - isolate optional provider failures from news
-                LOG.warning(
-                    "Paper ingestion failed (%s); using retained candidates",
-                    type(exc).__name__,
-                )
-                errors.append("ingestion_failed:" + type(exc).__name__)
-                papers = []
-        state.save_papers(papers)
-        selected = []
-        cutoff = now - timedelta(days=cfg["lookback_days"])
-        for paper in state.papers():
-            if not cutoff <= date(paper.published) <= now or not prefilter(paper, cfg):
-                continue
-            key = cache_key(paper, cfg, ai_config)
-            result = state.cached(key)
-            if result is None:
-                try:
-                    if client is None:
-                        from trendradar.ai.client import AIClient
+    from trendradar.content_pool.store import Store
+    from trendradar.content_pool.paper_ingest import ingest_papers
+    from trendradar.content_pool.runtime import run_lock
 
-                        # No silent fallback: cache namespace must identify the scoring model.
-                        client = AIClient({**ai_config, "FALLBACK_MODELS": []})
-                    result = score_paper(paper, cfg, client)
-                    state.record(key, result=result)
+    with run_lock(Path(cfg["state_path"]).with_suffix(".run.lock")):
+        store = Store(cfg["state_path"])
+        state = State(connection=store.db)
+        errors = []
+        try:
+            if papers is None:
+                try:
+                    papers = fetch(cfg, now)
                 except Exception as exc:  # noqa: BLE001 - isolate optional provider failures from news
-                    # AIClient retries transient provider failures; failed attempts remain
-                    # eligible on the next run. Never cache a failure as score zero.
-                    state.record(key, error=type(exc).__name__)
-                    errors.append(paper.canonical_id + ":" + type(exc).__name__)
+                    LOG.warning(
+                        "Paper ingestion failed (%s); using retained candidates",
+                        type(exc).__name__,
+                    )
+                    errors.append("ingestion_failed:" + type(exc).__name__)
+                    papers = []
+            ingest_papers(store.db, papers)
+            selected = []
+            cutoff = now - timedelta(days=cfg["lookback_days"])
+            for paper in state.papers():
+                if not cutoff <= date(paper.published) <= now or not prefilter(paper, cfg):
                     continue
-            result = validate_result(result)
-            if result["relevance_score"] < cfg["relevance_threshold"]:
-                continue
-            age = max(0, (now - date(paper.published)).total_seconds() / 3600)
-            recency = 0.5 ** (age / cfg["recency_half_life_hours"])
-            rank = (
-                cfg["relevance_weight"] * result["relevance_score"]
-                + cfg["recency_weight"] * recency
-            ) / (cfg["relevance_weight"] + cfg["recency_weight"])
-            selected.append({"paper": paper.to_dict(), **result, "ranking_score": rank})
-        selected.sort(
-            key=lambda item: (-item["ranking_score"], item["paper"]["canonical_id"])
-        )
-        return {
-            "papers": selected[: cfg["daily_output_limit"]],
-            "errors": errors,
-            "status": "partial_failure" if errors else "success",
-        }
-    finally:
-        state.close()
+                key = cache_key(paper, cfg, ai_config)
+                result = state.cached(key)
+                if result is None:
+                    try:
+                        if client is None:
+                            from trendradar.ai.client import AIClient
+
+                            # No silent fallback: cache namespace must identify the scoring model.
+                            client = AIClient({**ai_config, "FALLBACK_MODELS": []})
+                        result = score_paper(paper, cfg, client)
+                        state.record(key, result=result)
+                    except Exception as exc:  # noqa: BLE001 - isolate optional provider failures from news
+                        # AIClient retries transient provider failures; failed attempts remain
+                        # eligible on the next run. Never cache a failure as score zero.
+                        state.record(key, error=type(exc).__name__)
+                        errors.append(paper.canonical_id + ":" + type(exc).__name__)
+                        continue
+                result = validate_result(result)
+                if result["relevance_score"] < cfg["relevance_threshold"]:
+                    continue
+                age = max(0, (now - date(paper.published)).total_seconds() / 3600)
+                recency = 0.5 ** (age / cfg["recency_half_life_hours"])
+                rank = (
+                    cfg["relevance_weight"] * result["relevance_score"]
+                    + cfg["recency_weight"] * recency
+                ) / (cfg["relevance_weight"] + cfg["recency_weight"])
+                selected.append({"paper": paper.to_dict(), **result, "ranking_score": rank})
+            selected.sort(
+                key=lambda item: (-item["ranking_score"], item["paper"]["canonical_id"])
+            )
+            return {
+                "papers": selected[: cfg["daily_output_limit"]],
+                "errors": errors,
+                "status": "partial_failure" if errors else "success",
+            }
+        finally:
+            state.close()
+            store.close()
 
 
 def daily_recommendations(config, now):

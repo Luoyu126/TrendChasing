@@ -4,7 +4,7 @@ import argparse
 import json
 import logging
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,25 +13,25 @@ from scripts.collect_content import collect
 from scripts.collect_content import load_config as source_config
 from trendradar.content_pool.delivery import deliver
 from trendradar.content_pool.digest import Digests
-from trendradar.content_pool.llm import BudgetExceeded, Meter
+from trendradar.content_pool.llm import Meter
 from trendradar.content_pool.pipeline import Processor
 from trendradar.content_pool.runtime import configuration, run_lock
 from trendradar.content_pool.store import Store, now
-from trendradar.papers.arxiv import date, fetch
+from trendradar.papers.arxiv import fetch
+from trendradar.content_pool.paper_ingest import ingest_papers
 
 
 def notice(store, since, paper_failed=False, trial=False):
     failures = {}
     rows = store.db.execute(
-        """SELECT source_id,status FROM fetch_runs WHERE id IN (
-        SELECT max(id) FROM fetch_runs WHERE started_at>=? GROUP BY source_id)""",
-        (since,),
+        """SELECT source_id,status,started_at FROM fetch_runs WHERE id IN (
+        SELECT max(id) FROM fetch_runs GROUP BY source_id)""",
     )
     for row in rows:
-        if row["status"] in ("failed", "interrupted", "running"):
+        if row["status"] in ("failed", "interrupted", "running", "empty", "partial") or row["started_at"] < since:
             platform = row["source_id"].split(":")[0]
             failures[platform] = failures.get(platform, 0) + 1
-    names = {"xiaohongshu": "小红书", "zhihu": "知乎", "twitter": "X"}
+    names = {"xiaohongshu": "小红书", "zhihu": "知乎", "twitter": "X", "wechat": "公众号"}
     parts = [f"{names.get(k, k)} {v} 个订阅" for k, v in sorted(failures.items())]
     if paper_failed:
         parts.append("arXiv")
@@ -39,57 +39,27 @@ def notice(store, since, paper_failed=False, trial=False):
     return ("试运行：近期内容样本。" if trial else "") + text
 
 
-def screen_papers(processor, trial=False, history=False):
+def collect_papers(processor, trial=False):
+    """Persist raw arXiv candidates before any model filtering."""
     cfg = dict(processor.cfg)
+    if not cfg["enabled"]:
+        return False
     if trial:
         cfg["max_candidates"] = 5
         cfg["request_timeout"] = 20
-    failed = False
     try:
         fetched = fetch(cfg, datetime.now(UTC))
-        processor.state.save_papers(fetched)
-    except Exception as exc:  # noqa: BLE001 - one provider must not block the digest
+        ingest_papers(processor.store.db, fetched)
+        return False
+    except Exception as exc:  # retained candidates are still processed on failure
         print("arxiv: " + type(exc).__name__, flush=True)
-        failed = True
-    cutoff = datetime.now(UTC) - timedelta(days=cfg["lookback_days"])
-    candidates = sorted(
-        (
-            p
-            for p in processor.state.papers()
-            if cutoff <= date(p.published) <= datetime.now(UTC)
-        ),
-        key=lambda p: p.published,
-        reverse=True,
-    )
-    if processor.meter.config.get("daily_window") == "previous_day":
-        from trendradar.content_pool.window import position, previous_day
-
-        window = previous_day(now(), processor.meter.config["timezone"])
-        candidates = [
-            p
-            for p in candidates
-            if position(p.published, window) in ("primary", "supplement")
-        ]
-    count = 0
-    for paper in candidates[: 5 if trial else None]:
-        if processor.store.db.execute(
-            "SELECT 1 FROM work_records WHERE id=? AND status='delivered'",
-            (paper.canonical_id,),
-        ).fetchone():
-            continue
-        try:
-            value = processor.screen(paper)
-            if value:
-                processor.import_approved({"papers": [value]}, history=history)
-                count += 1
-        except BudgetExceeded:
-            break
-        except Exception as exc:  # noqa: BLE001 - retained in paper state for retry
-            print("paper screening: " + type(exc).__name__, flush=True)
-    return failed, count
+        return True
 
 
 def run(args):
+    if getattr(args, "database_only", False):
+        from trendradar.content_pool.hosted import run_daily
+        return run_daily(args, ROOT)
     cfg, ai, paper = configuration(ROOT, args.config)
     if args.trial:
         cfg = {
@@ -166,7 +136,7 @@ def run(args):
             if args.trial:
                 since = now()
             if not args.skip_collect:
-                sources = source_config(cfg["sources_config"])
+                sources = source_config(cfg["sources_config"], pool_config=args.config)
                 sources["database"] = Path(cfg["db_path"])
                 import os
 
@@ -178,8 +148,9 @@ def run(args):
                         sources[key] = sources[key][:2]
                     sources["request_timeout_seconds"] = 25
                 collect(store.db, sources)
-            print("social screening started", flush=True)
-            processor.process(limit=8 if args.trial else None)
+            paper_failed = False if args.skip_collect else collect_papers(processor, args.trial)
+            print("unified candidate screening started", flush=True)
+            processor.process(limit=13 if args.trial else None)
             # A first trial may have no newly discovered IDs because historical
             # ingestion already fetched them. Select a bounded recent sample explicitly.
             history = False
@@ -193,15 +164,16 @@ def run(args):
                 candidates = store.candidates(True)
                 candidates.sort(key=lambda r: r["published_at"] or "", reverse=True)
                 selected = []
-                for platform in ("twitter", "zhihu", "xiaohongshu"):
+                for platform in ("twitter", "zhihu", "xiaohongshu", "wechat"):
                     selected += [
                         (r["platform"], r["content_id"])
                         for r in candidates
                         if r["platform"] == platform
                     ][:2]
                 processor.process(history=True, candidate_ids=set(selected))
-            print("paper screening started", flush=True)
-            paper_failed, paper_count = screen_papers(processor, args.trial, history)
+            paper_count = store.db.execute(
+                "SELECT count(*) FROM records WHERE platform='paper' AND status='accepted' AND history=0"
+            ).fetchone()[0]
             print("screening complete", flush=True)
             if args.collect_only:
                 return {
@@ -269,7 +241,16 @@ def main():
         action="store_true",
         help="Resume retained candidates without fetching social feeds again",
     )
+    parser.add_argument("--database-only", action="store_true", help="Read Supabase candidates and cached paper metadata; no RSS/arXiv discovery")
+    parser.add_argument("--date", help="Content date YYYY-MM-DD (default previous local calendar day)")
+    parser.add_argument("--dry-run", action="store_true", help="Preview only; never send or acknowledge delivery")
     args = parser.parse_args()
+    if args.dry_run and (args.send or args.send_ready or args.deliver_batch):
+        parser.error("--dry-run cannot send")
+    if args.date and not args.database_only:
+        parser.error("--date requires --database-only")
+    if args.database_only and (args.trial or args.collect_only or args.send_ready or args.deliver_batch):
+        parser.error("--database-only supports --date, --dry-run or --send")
     if args.send_ready and not args.send:
         parser.error("--send-ready requires --send")
     if args.deliver_batch and not args.send:

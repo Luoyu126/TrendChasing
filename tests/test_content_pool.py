@@ -84,6 +84,12 @@ class ContentPoolTest(unittest.TestCase):
         self.assertEqual(pool.collect(self.db, self.config, lambda *_: b"<html>login</html>"), 1)
         self.assertEqual(self.db.execute("SELECT count(*) FROM items").fetchone()[0], 1)
 
+    def test_weread_timestamp_is_not_treated_as_publication_date(self):
+        item = pool.parse_feed(feed(link="https://mp.weixin.qq.com/s/abc~def"), "wechat:test", "wechat", trust_published_at=False)[0]
+        self.assertEqual(item["content_id"], "short:abc~def")
+        self.assertIsNone(item["published_at"])
+        self.assertEqual(json.loads(item["quality_flags"]), ["missing_published_at"])
+
     def test_wechat_direct_feed_uses_configured_service(self):
         config = {"wechat_feeds": [{"id": "qbitai", "url": "http://127.0.0.1:8001/feed/123.xml"}],
                   "rsshub_url": "http://localhost:1200", "request_timeout_seconds": 2}

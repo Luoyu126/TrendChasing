@@ -30,7 +30,7 @@ def load_env(path):
 
 def configuration(root, path):
     root = Path(root)
-    for filename in ("ai.local.env", "email.local.env"):
+    for filename in (() if os.environ.get("GITHUB_ACTIONS") == "true" else ("ai.local.env", "email.local.env")):
         load_env(root / "config" / filename)
     cfg = yaml.safe_load(Path(path).read_text())
     for key in (
@@ -47,7 +47,7 @@ def configuration(root, path):
 
     ai = _load_ai_config(yaml.safe_load(Path(cfg["ai_config"]).read_text()))
     paper = load(cfg["papers_config"])
-    paper["state_path"] = str((root / paper["state_path"]).resolve())
+    paper["state_path"] = cfg["db_path"]
     return cfg, ai, paper
 
 

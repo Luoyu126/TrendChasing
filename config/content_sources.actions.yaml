@@ -1,0 +1,119 @@
+# Hosted subscriptions; WeRSS host is injected with WERSS_BASE_URL.
+rsshub_url: http://127.0.0.1:1200
+timezone: America/New_York
+poll_interval_minutes: 30
+request_timeout_seconds: 120
+xiaohongshu:
+  accounts:
+  - https://www.xiaohongshu.com/user/profile/60c844e40000000020028672
+  - https://www.xiaohongshu.com/user/profile/62c98736000000001501e075
+  - https://www.xiaohongshu.com/user/profile/670450b5000000001d020d62
+  - https://www.xiaohongshu.com/user/profile/5f709b34000000000100a497
+  - https://www.xiaohongshu.com/user/profile/616c409900000000020251fa
+zhihu:
+  accounts:
+  - https://www.zhihu.com/people/su-jian-lin-22
+  - https://www.zhihu.com/people/tian-yuan-dong
+  - https://www.zhihu.com/people/zhang-jun-lin-76
+  - https://www.zhihu.com/people/li-bo-jie
+  - https://www.zhihu.com/people/wan-shang-zhu-ce-de
+  - https://www.zhihu.com/people/billmatrix
+  - https://www.zhihu.com/people/wabjpz
+  - https://www.zhihu.com/people/yahah-97
+  - https://www.zhihu.com/people/rumor-lee
+  - https://www.zhihu.com/people/who-u
+  - https://www.zhihu.com/people/sikila
+  - https://www.zhihu.com/people/summer-clover
+  - https://www.zhihu.com/people/naiyan-wang
+  - https://www.zhihu.com/people/mli65
+  - https://www.zhihu.com/people/tsxiyao
+  - https://www.zhihu.com/people/chenweiphd
+twitter:
+  include_replies: false
+  include_retweets: true
+  accounts:
+  - https://x.com/OpenAI
+  - https://x.com/OpenAIDevs
+  - https://x.com/OpenAINewsroom
+  - https://x.com/ChatGPTapp
+  - https://x.com/AnthropicAI
+  - https://x.com/claudeai
+  - https://x.com/GoogleDeepMind
+  - https://x.com/GoogleAI
+  - https://x.com/GoogleAIStudio
+  - https://x.com/deepseek_ai
+  - https://x.com/xai
+  - https://x.com/grok
+  - https://x.com/AIatMeta
+  - https://x.com/MistralAI
+  - https://x.com/Alibaba_Qwen
+  - https://x.com/Kimi_Moonshot
+  - https://x.com/MiniMax_AI
+  - https://x.com/MicrosoftAI
+  - https://x.com/MSFTResearch
+  - https://x.com/NVIDIAAI
+  - https://x.com/NVIDIAAIDev
+  - https://x.com/huggingface
+  - https://x.com/cohere
+  - https://x.com/scale_AI
+  - https://x.com/perplexity_ai
+  - https://x.com/allen_ai
+  - https://x.com/SakanaAILabs
+  - https://x.com/NousResearch
+  - https://x.com/togethercompute
+  - https://x.com/SSI
+  - https://x.com/cursor_ai
+  - https://x.com/cognition_labs
+  - https://x.com/StabilityAI
+  - https://x.com/runwayml
+  - https://x.com/karpathy
+  - https://x.com/elonmusk
+  - https://x.com/sama
+  - https://x.com/DarioAmodei
+  - https://x.com/demishassabis
+  - https://x.com/ilyasut
+  - https://x.com/ylecun
+  - https://x.com/drfeifei
+  - https://x.com/AndrewYNg
+  - https://x.com/DrJimFan
+  - https://x.com/polynoamial
+  - https://x.com/natolambert
+  - https://x.com/lilianweng
+  - https://x.com/fchollet
+  - https://x.com/_jasonwei
+  - https://x.com/tri_dao
+  - https://x.com/JeffDean
+  - https://x.com/gdb
+  - https://x.com/johnschulman2
+  - https://x.com/AravSrinivas
+  - https://x.com/alexandr_wang
+  - https://x.com/mustafasuleyman
+  - https://x.com/percyliang
+  - https://x.com/pabbeel
+  - https://x.com/svlevine
+  - https://x.com/chelseabfinn
+  - https://x.com/aviral_kumar2
+  - https://x.com/dwarkesh_sp
+
+# 微信公众号：机器之心、量子位（搜狗公开入口）
+wechat:
+  accounts: []
+  feeds:
+  - id: almosthuman2014
+    name: 机器之心
+    url: http://127.0.0.1:8001/feed/MP_WXS_3073282833.xml
+    external_werss: true
+    refresh_werss: false
+    trust_published_at: false
+  - id: qbitai
+    name: 量子位
+    url: http://127.0.0.1:8001/feed/MP_WXS_3236757533.xml
+    external_werss: true
+    refresh_werss: false
+    trust_published_at: false
+  - id: ai_era
+    name: 新智元
+    url: http://127.0.0.1:8001/feed/MP_WXS_3271041950.xml
+    external_werss: true
+    refresh_werss: false
+    trust_published_at: false
