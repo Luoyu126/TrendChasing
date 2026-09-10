@@ -37,6 +37,11 @@ def run_daily(args, root):
 
     cfg, ai, paper = configuration(root, args.config)
     window = for_date(args.date, cfg['timezone']) if args.date else previous_day(now(), cfg['timezone'])
+    if cfg.get('sources_config'):
+        from scripts.collect_content import load_config
+        source_settings = load_config(cfg['sources_config'], args.config)
+        if not source_settings.get('wechat', {}).get('enabled', True):
+            cfg['excluded_platforms'] = ['wechat']
     cfg = {**cfg, 'daily_window': 'previous_day', 'business_window': window,
            'report_date': window['date']}
     with run_lock(Path(cfg['db_path']).with_suffix('.run.lock')):

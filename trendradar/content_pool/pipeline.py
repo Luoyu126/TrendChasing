@@ -330,7 +330,8 @@ class Processor:
         candidates = [
             r
             for r in self.store.candidates(history)
-            if r["evaluation_key"] != fingerprint
+            if r["platform"] not in self.meter.config.get("excluded_platforms", [])
+            and r["evaluation_key"] != fingerprint
             and (
                 candidate_ids is None
                 or (r["platform"], r["content_id"]) in candidate_ids

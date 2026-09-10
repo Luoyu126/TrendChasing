@@ -119,6 +119,9 @@ def import_snapshot(connection, snapshot, manifest, *, commit=False):
     with connection.transaction(force_rollback=not commit):
         connection.execute("SELECT pg_advisory_xact_lock(734901264182)")
         connection.execute("SET LOCAL statement_timeout='120s'")
+        # Supabase may default to 0, rounding float8 text results and breaking
+        # exact snapshot hashes even though COPY preserved the stored bits.
+        connection.execute("SET LOCAL extra_float_digits=3")
         existing = connection.execute(
             "SELECT 1 FROM pg_namespace WHERE nspname=%s", (SCHEMA,)
         ).fetchone()

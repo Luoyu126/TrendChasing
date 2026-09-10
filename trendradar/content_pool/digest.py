@@ -49,6 +49,11 @@ class Digests:
                     (int(history),),
                 )
             ]
+            excluded = set(self.meter.config.get("excluded_platforms", []))
+            if excluded:
+                rows = [r for r in rows if any(
+                    s[0] not in excluded for s in db.execute(
+                        "SELECT platform FROM entry_sources WHERE entry_id=?", (r["id"],))) ]
             if window:
                 eligible = []
                 for row in rows:
@@ -110,6 +115,7 @@ class Digests:
                         (row["id"],),
                     )
                 ]
+                sources = [s for s in sources if s["platform"] not in excluded]
                 for source in sources:
                     if window:
                         source["supplement"] = (

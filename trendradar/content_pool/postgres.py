@@ -144,6 +144,7 @@ def open_postgres():
     db = Database(connection)
     try:
         connection.execute("SET statement_timeout='30s'")
+        connection.execute("SET extra_float_digits=3")
         connection.execute("SET lock_timeout='5s'")
         if not connection.execute('SELECT pg_try_advisory_lock(%s)', (LOCK_ID,)).fetchone()[0]:
             raise RuntimeError('another_content_run_is_active')
