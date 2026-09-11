@@ -1,8 +1,5 @@
 name: Collect Content
 on:
-  push:
-    branches: [master]
-    paths: ['.github/workflows/content-collect.yml']
   schedule:
     - cron: '34 * * * *'
   workflow_dispatch:
@@ -19,7 +16,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   collect:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || vars.CONTENT_SCHEDULE_ENABLED == 'true'
+    if: github.event_name == 'workflow_dispatch' || vars.CONTENT_SCHEDULE_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 55
     env:
@@ -52,7 +49,7 @@ jobs:
         run: docker compose -f docker/docker-compose.actions.yml up -d --wait --wait-timeout 240
       - name: Collect without AI or email
         env:
-          COLLECT_MODE: ${{ inputs.mode || (github.event_name == 'push' && 'smoke') || 'full' }}
+          COLLECT_MODE: ${{ inputs.mode || 'full' }}
         run: |
           args=(--config output/hosted-config.yaml)
           if [ "$COLLECT_MODE" = smoke ]; then args+=(--smoke); fi
