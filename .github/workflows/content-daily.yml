@@ -3,6 +3,7 @@ on:
   schedule:
     - cron: '34 7 * * *'
       timezone: America/New_York
+    - cron: '39 19 * * *'
   workflow_dispatch:
     inputs:
       date:
@@ -21,7 +22,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   daily:
-    if: github.event_name == 'workflow_dispatch' || vars.CONTENT_SCHEDULE_ENABLED == 'true'
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '39 19 * * *' || vars.CONTENT_SCHEDULE_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 55
     env:
@@ -50,7 +51,7 @@ jobs:
       - name: Preview or deliver from database
         env:
           REPORT_DATE: ${{ inputs.date }}
-          REPORT_MODE: ${{ inputs.mode || 'send' }}
+          REPORT_MODE: ${{ inputs.mode || (github.event.schedule == '39 19 * * *' && 'preview') || 'send' }}
           SEND_ENABLED: ${{ vars.CONTENT_SEND_ENABLED }}
         shell: bash
         run: |
