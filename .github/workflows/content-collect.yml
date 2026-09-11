@@ -12,7 +12,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: content-supabase
+  group: content-supabase-v2
   cancel-in-progress: false
 jobs:
   collect:
