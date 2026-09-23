@@ -1,3 +1,4 @@
+# Registered so GitHub Actions indexes this workflow on TrendChasing.
 name: Morning Content Digest
 on:
   schedule:
