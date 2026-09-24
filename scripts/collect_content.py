@@ -79,8 +79,9 @@ def wechat_account_id(value):
 
 
 def sources(config):
-    for account in config.get("accounts", []):
-        yield "xiaohongshu", "xiaohongshu:" + account, f"/xiaohongshu/user/{account}/notes"
+    if config.get("xiaohongshu", {}).get("enabled", True):
+        for account in config.get("accounts", []):
+            yield "xiaohongshu", "xiaohongshu:" + account, f"/xiaohongshu/user/{account}/notes"
     for account in config.get("zhihu_accounts", []):
         yield "zhihu", f"zhihu:{account}:answers", f"/zhihu/people/answers/{account}"
         yield "zhihu", f"zhihu:{account}:articles", f"/zhihu/posts/people/{account}"

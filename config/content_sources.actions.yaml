@@ -4,6 +4,7 @@ timezone: America/New_York
 poll_interval_minutes: 30
 request_timeout_seconds: 120
 xiaohongshu:
+  enabled: false  # 暂停小红书，保留订阅以便之后恢复
   accounts:
   - https://www.xiaohongshu.com/user/profile/60c844e40000000020028672
   - https://www.xiaohongshu.com/user/profile/62c98736000000001501e075
