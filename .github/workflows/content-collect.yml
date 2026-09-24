@@ -15,6 +15,7 @@ permissions:
 concurrency:
   group: content-supabase-v2
   cancel-in-progress: false
+  queue: max
 jobs:
   collect:
     if: github.event_name == 'workflow_dispatch' || vars.CONTENT_SCHEDULE_ENABLED == 'true'
