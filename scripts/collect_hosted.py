@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from scripts.collect_content import collect, load_config
+from scripts.collect_content import collect, load_config, sources as iter_sources
 from trendradar.content_pool.paper_ingest import ingest_papers
 from trendradar.content_pool.pipeline import ARXIV, Processor, clean
 from trendradar.content_pool.runtime import configuration, run_lock
@@ -17,8 +17,9 @@ from trendradar.papers.arxiv import fetch
 
 
 def papers_collect(store, paper):
+    """Return (metadata_failures, fetch_succeeded). A fetched feed counts as success."""
     if not paper['enabled']:
-        return 0
+        return 0, False
     with store.db:
         run = store.db.execute("INSERT INTO fetch_runs(source_id,started_at,status) VALUES ('arxiv',?,'running')", (now(),)).lastrowid
     try:
@@ -30,7 +31,7 @@ def papers_collect(store, paper):
         with store.db:
             store.db.execute("UPDATE fetch_runs SET finished_at=?,status='failed',error=? WHERE id=?", (now(), type(exc).__name__, run))
         print('arxiv: failed (' + type(exc).__name__ + ')')
-        return 1
+        return 1, False
     # Resolve explicit arXiv links outside the daily task; no model classification.
     processor = Processor(store, SimpleNamespace(config={'retries': 1}), paper)
     failures = 0
@@ -47,7 +48,7 @@ def papers_collect(store, paper):
         with store.db:
             store.db.execute("UPDATE fetch_runs SET status='partial',error=? WHERE id=?", (f'paper_metadata_failures:{failures}', run))
     print(f'arxiv: returned={len(found)}, metadata_failures={failures}')
-    return int(bool(failures))
+    return int(bool(failures)), True
 
 
 def main():
@@ -65,8 +66,11 @@ def main():
     with run_lock(Path(cfg['db_path']).with_suffix('.run.lock')):
         store = Store(cfg['db_path'])
         try:
-            failed = papers_collect(store, paper)
-            failed += collect(store.db, sources)
+            paper_failures, paper_ok = papers_collect(store, paper)
+            planned = len(list(iter_sources(sources)))
+            social_failed = collect(store.db, sources)
+            failed = paper_failures + social_failed
+            succeeded = int(paper_ok) + planned - social_failed
             if args.smoke:
                 from trendradar.content_pool.store import ingest, dumps
                 # Replay retained real payloads inside a rolled-back transaction.
@@ -85,8 +89,8 @@ def main():
                 finally:
                     store.db.rollback()
                 print(dumps({'idempotency': 'passed' if sample else 'no_social_payload_to_test', 'replayed':len(sample), 'records_before':count, 'records_after':after}))
-            print(json.dumps({'status': 'collected', 'failed_sources': failed}))
-            return int(bool(failed))
+            print(json.dumps({'status': 'collected', 'failed_sources': failed, 'succeeded_sources': succeeded}))
+            return 0 if succeeded else 1
         finally:
             store.close()
 
