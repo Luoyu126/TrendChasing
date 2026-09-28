@@ -1,4 +1,5 @@
 # Registered so GitHub Actions indexes this workflow on TrendChasing.
+# A failed or timed-out send starts a new run, up to 5 retries. Each run gets a new machine.
 name: Morning Content Digest
 on:
   schedule:
@@ -15,6 +16,11 @@ on:
         type: choice
         options: [preview, send]
         default: preview
+      retry:
+        description: 'Retries already used. The first attempt is 0; 5 is the last retry.'
+        required: false
+        type: string
+        default: '0'
 permissions:
   contents: read
 concurrency:
@@ -26,6 +32,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || vars.CONTENT_SCHEDULE_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 55
+    outputs:
+      content_date: ${{ steps.plan.outputs.content_date }}
+      retry_count: ${{ steps.plan.outputs.retry_count }}
     env:
       CONTENT_DATABASE_BACKEND: supabase
       SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
@@ -39,6 +48,29 @@ jobs:
       EMAIL_SMTP_SERVER: ${{ vars.EMAIL_SMTP_SERVER }}
       EMAIL_SMTP_PORT: ${{ vars.EMAIL_SMTP_PORT || '465' }}
     steps:
+      - name: Resolve content date and retry count
+        id: plan
+        env:
+          INPUT_DATE: ${{ github.event.inputs.date }}
+          INPUT_RETRY: ${{ github.event.inputs.retry }}
+        shell: bash
+        run: |
+          date="$INPUT_DATE"
+          if ! [[ "$date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+            date=$(python3 - <<'PY'
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+          print((datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)).isoformat())
+          PY
+          )
+          fi
+          retry="$INPUT_RETRY"
+          if ! [[ "$retry" =~ ^[0-5]$ ]]; then
+            retry=0
+          fi
+          echo "content_date=$date" >> "$GITHUB_OUTPUT"
+          echo "retry_count=$retry" >> "$GITHUB_OUTPUT"
+          echo "Content date ${date}; retries already used ${retry} of 5"
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
@@ -51,13 +83,12 @@ jobs:
         run: python scripts/configure_hosted.py
       - name: Preview or deliver from database
         env:
-          REPORT_DATE: ${{ inputs.date }}
+          REPORT_DATE: ${{ steps.plan.outputs.content_date }}
           REPORT_MODE: ${{ inputs.mode || 'send' }}
           SEND_ENABLED: ${{ vars.CONTENT_SEND_ENABLED }}
         shell: bash
         run: |
-          args=(--config output/hosted-config.yaml --database-only)
-          if [ -n "$REPORT_DATE" ]; then args+=(--date "$REPORT_DATE"); fi
+          args=(--config output/hosted-config.yaml --database-only --date "$REPORT_DATE")
           if [ "$REPORT_MODE" = send ]; then
             if [ "$SEND_ENABLED" != true ]; then
               echo 'Sending is disabled. Set CONTENT_SEND_ENABLED=true after preview review.'
@@ -68,3 +99,44 @@ jobs:
             args+=(--dry-run)
           fi
           python scripts/run_content_daily.py "${args[@]}"
+  retry:
+    needs: daily
+    if: ${{ failure() && (github.event_name == 'schedule' || github.event.inputs.mode == 'send') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch the next attempt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONTENT_DATE: ${{ needs.daily.outputs.content_date }}
+          USED_RETRIES: ${{ needs.daily.outputs.retry_count }}
+          REPO: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          used="${USED_RETRIES:-0}"
+          if ! [[ "$used" =~ ^[0-9]+$ ]]; then
+            used=0
+          fi
+          if [ "$used" -ge 5 ]; then
+            echo "Stopped after 5 retries."
+            exit 0
+          fi
+          next=$((used + 1))
+          date="$CONTENT_DATE"
+          if ! [[ "$date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+            date=$(python3 - <<'PY'
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+          print((datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)).isoformat())
+          PY
+          )
+          fi
+          echo "Dispatching retry ${next} of 5 for ${date}"
+          gh api --method POST "repos/${REPO}/actions/workflows/content-daily.yml/dispatches" \
+            -f "ref=${REF_NAME}" \
+            -f "inputs[date]=${date}" \
+            -f "inputs[mode]=send" \
+            -f "inputs[retry]=${next}"

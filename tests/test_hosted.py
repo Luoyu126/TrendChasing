@@ -130,7 +130,13 @@ class ConfigurationTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         daily = yaml.safe_load((root / '.github/workflows/content-daily.yml').read_text())
         event = daily.get('on', daily.get(True))
-        self.assertEqual(event['schedule'], [{'cron':'34 7 * * *','timezone':'America/New_York'}])
+        self.assertEqual(event['schedule'], [{'cron':'0 0 * * *','timezone':'America/New_York'}])
+        self.assertEqual(event['workflow_dispatch']['inputs']['retry']['default'], '0')
+        retry = daily['jobs']['retry']
+        self.assertEqual(retry['needs'], 'daily')
+        self.assertIn('failure()', retry['if'])
+        self.assertEqual(retry['permissions'], {'actions': 'write'})
+        self.assertIn('-ge 5', retry['steps'][0]['run'])
         collect_w = yaml.safe_load((root / '.github/workflows/content-collect.yml').read_text())
         self.assertEqual(collect_w['concurrency'], daily['concurrency'])
         self.assertIn('CONTENT_SCHEDULE_ENABLED', daily['jobs']['daily']['if'])
