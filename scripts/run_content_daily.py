@@ -280,7 +280,7 @@ def main():
     return (
         0
         if result["status"]
-        in ("sent", "preview", "collected", "already_cleaned", "already_sent")
+        in ("sent", "preview", "collected", "already_cleaned", "already_sent", "waiting_for_classification")
         else 1
     )
 

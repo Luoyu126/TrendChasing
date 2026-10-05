@@ -255,36 +255,41 @@ class Digests:
         self.store.cache_put(key, "summary", result)
         return result
 
-    def preview(self, batch_id, allow_fallback=False):
+    def stored_summary(self, snapshot):
+        """Render from insights saved at classification time, with no model call."""
+        ids = [row["id"] for row in snapshot if row["category"] == "high_level"]
+        return {
+            "topics": [
+                {
+                    "title": "本期观点",
+                    "summary": "以下为已完成整理的观点与时事。",
+                    "ids": ids,
+                }
+            ]
+            if ids
+            else [],
+            "fallback": True,
+        }
+
+    def preview(self, batch_id, allow_fallback=False, allow_model=True):
         batch = self.get(batch_id)
         if batch["status"] == "cleaned":
             raise ValueError("batch_payload_cleaned")
         snapshot = json.loads(batch["snapshot"])
-        try:
-            summary = (
-                json.loads(batch["summary"])
-                if batch["summary"]
-                else self.summarize(
+        if batch["summary"]:
+            summary = json.loads(batch["summary"])
+        elif not allow_model:
+            summary = self.stored_summary(snapshot)
+        else:
+            try:
+                summary = self.summarize(
                     [r for r in snapshot if r["category"] == "high_level"],
                     "batch:" + batch_id,
                 )
-            )
-        except Exception:
-            if not allow_fallback:
-                raise
-            ids = [r["id"] for r in snapshot if r["category"] == "high_level"]
-            summary = {
-                "topics": [
-                    {
-                        "title": "本期观点",
-                        "summary": "以下为已完成整理的观点与时事。",
-                        "ids": ids,
-                    }
-                ]
-                if ids
-                else [],
-                "fallback": True,
-            }
+            except Exception:
+                if not allow_fallback:
+                    raise
+                summary = self.stored_summary(snapshot)
         with self.store.db:
             self.store.db.execute(
                 "UPDATE batches SET summary=?,status='ready',error=NULL WHERE id=?",

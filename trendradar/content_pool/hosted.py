@@ -4,7 +4,6 @@ from pathlib import Path
 from .delivery import deliver
 from .digest import Digests
 from .llm import Meter
-from .pipeline import Processor
 from .runtime import configuration, run_lock
 from .store import Store, now
 from .window import for_date, previous_day
@@ -49,14 +48,22 @@ def run_daily(args, root):
         try:
             prepare_schema(store.db, cfg["timezone"])
             meter = Meter(store, ai, cfg)
-            processor = Processor(store, meter, paper)
-            processor.database_only = True
             digests = Digests(store, meter, paper, cfg['report_dir'])
             existing = store.db.execute('SELECT batch_id FROM digest_days WHERE day=?', (window['date'],)).fetchone()
             if existing and digests.get(existing[0])['status'] == 'cleaned':
                 return {'status': 'already_sent', 'date': window['date'], 'batch_id': existing[0]}
             if not existing:
-                processor.process()
+                excluded = set(cfg.get('excluded_platforms') or [])
+                waiting = [
+                    row[0] for row in store.db.execute(
+                        "SELECT i.platform FROM records r JOIN items i USING(platform, content_id) WHERE r.status='pending'"
+                    ) if row[0] not in excluded
+                ]
+                admitted = store.db.execute(
+                    "SELECT count(*) FROM pool_entries WHERE batch_id IS NULL"
+                ).fetchone()[0]
+                if admitted == 0 and waiting:
+                    return {'status': 'waiting_for_classification', 'date': window['date']}
             message = notice(store, window['start'], excluded_platforms=cfg.get('excluded_platforms', []))
             if cfg.get('sources_config'):
                 from scripts.collect_content import load_config, sources
@@ -71,7 +78,7 @@ def run_daily(args, root):
                 message += f' {pending} 条内容待核验，保留后续处理。'
             batch_id = existing[0] if existing else digests.prepare(notice=message, allow_empty=True)
             # Rebuild HTML/JSON from DB on every fresh runner. No artifacts needed.
-            digests.preview(batch_id, allow_fallback=True)
+            digests.preview(batch_id, allow_fallback=True, allow_model=False)
             if args.send:
                 return deliver(digests, batch_id)
             return {'status': 'preview', 'date': window['date'], 'batch_id': batch_id,

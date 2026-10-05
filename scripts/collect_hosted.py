@@ -1,4 +1,4 @@
-"""Hourly ingestion only: RSS, arXiv metadata, source outcomes; no AI or SMTP."""
+"""Hourly ingestion plus one model call, spaced a full collect interval apart. No SMTP."""
 import argparse
 import json
 import sys
@@ -9,6 +9,13 @@ from types import SimpleNamespace
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.collect_content import collect, load_config, sources as iter_sources
+from trendradar.content_pool.llm import BudgetExceeded, Meter
+from trendradar.content_pool.pace import (
+    COLLECT_WINDOW_SECONDS,
+    call_is_due,
+    maximum_gap,
+    one_call_ids,
+)
 from trendradar.content_pool.paper_ingest import ingest_papers
 from trendradar.content_pool.pipeline import ARXIV, Processor, clean
 from trendradar.content_pool.runtime import configuration, run_lock
@@ -51,12 +58,61 @@ def papers_collect(store, paper):
     return int(bool(failures)), True
 
 
+def fresh_keys(db, started):
+    return {
+        (row[0], row[1])
+        for row in db.execute(
+            "SELECT platform,content_id FROM records WHERE first_seen_at>=?",
+            (started,),
+        )
+    }
+
+
+def last_model_elapsed(db, clock):
+    row = db.execute(
+        "SELECT max(created_at) FROM usage_events WHERE event='request_started'"
+    ).fetchone()
+    if not row or not row[0]:
+        return None
+    stamp = datetime.fromisoformat(row[0])
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=UTC)
+    return (clock - stamp).total_seconds()
+
+
+def classify_once(store, cfg, ai, paper, started, excluded):
+    """One model call, and only after the full collect interval since the last one."""
+    gap = maximum_gap(1, COLLECT_WINDOW_SECONDS)
+    elapsed = last_model_elapsed(store.db, datetime.now(UTC))
+    if not call_is_due(elapsed, gap):
+        return {"classification": "deferred", "gap_seconds": gap}
+    candidates = [
+        row for row in store.candidates() if row["platform"] not in excluded
+    ]
+    selected = one_call_ids(
+        candidates, fresh_keys(store.db, started), int(cfg.get("batch_size", 10))
+    )
+    if not selected:
+        return {"classification": "idle", "gap_seconds": gap}
+    meter = Meter(
+        store, ai, {**cfg, "run_call_budget": 1, "daily_window": None}
+    )
+    processor = Processor(store, meter, paper)
+    try:
+        processor.process(candidate_ids=set(selected))
+    except BudgetExceeded:
+        pass
+    finally:
+        processor.close()
+    return {"classification": "called", "gap_seconds": gap, "calls": meter.calls}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', default=str(ROOT / 'config/content_pool.yaml'))
     parser.add_argument('--smoke', action='store_true', help='One account per platform, five arXiv candidates, verify idempotent re-ingestion')
     args = parser.parse_args()
-    cfg, _, paper = configuration(ROOT, args.config)
+    cfg, ai, paper = configuration(ROOT, args.config)
     sources = load_config(cfg['sources_config'], args.config)
     if args.smoke:
         for key in ('accounts', 'zhihu_accounts', 'twitter_accounts'):
@@ -65,6 +121,7 @@ def main():
         sources['request_timeout_seconds'] = min(45, sources['request_timeout_seconds'])
     with run_lock(Path(cfg['db_path']).with_suffix('.run.lock')):
         store = Store(cfg['db_path'])
+        started = now()
         try:
             paper_failures, paper_ok = papers_collect(store, paper)
             planned = len(list(iter_sources(sources)))
@@ -89,7 +146,16 @@ def main():
                 finally:
                     store.db.rollback()
                 print(dumps({'idempotency': 'passed' if sample else 'no_social_payload_to_test', 'replayed':len(sample), 'records_before':count, 'records_after':after}))
-            print(json.dumps({'status': 'collected', 'failed_sources': failed, 'succeeded_sources': succeeded}))
+            payload = {'status': 'collected', 'failed_sources': failed, 'succeeded_sources': succeeded}
+            if not args.smoke:
+                excluded = set()
+                if not sources.get('wechat', {}).get('enabled', True):
+                    excluded.add('wechat')
+                try:
+                    payload.update(classify_once(store, cfg, ai, paper, started, excluded))
+                except Exception as exc:  # noqa: BLE001 - ingestion already finished; do not leak provider text
+                    payload.update({'classification': 'failed', 'category': type(exc).__name__})
+            print(json.dumps(payload))
             return 0 if succeeded else 1
         finally:
             store.close()

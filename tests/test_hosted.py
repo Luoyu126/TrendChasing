@@ -117,6 +117,51 @@ class HostedTests(unittest.TestCase):
             self.assertEqual(run_daily(args, self.root)['status'], 'preview')
         self.assertEqual(before, [tuple(r) for r in self.store.db.execute('SELECT * FROM deliveries')])
 
+    def test_mail_does_not_call_the_model(self):
+        self.configured()
+        self.ingest(item())
+        self.processor.process()
+        self.digests.prepare(allow_empty=True)
+        cfg = {**self.meter.config, 'db_path': str(self.store.path), 'report_dir': str(self.root / 'reports')}
+        args = SimpleNamespace(config='unused', date='2026-09-09', send=False)
+        with patch('trendradar.content_pool.hosted.Meter.chat', side_effect=AssertionError('mail_called_model')), patch('trendradar.content_pool.hosted.configuration', return_value=(cfg, self.meter.ai, self.processor.cfg)), patch('trendradar.content_pool.hosted.Store', return_value=self.store), patch.object(self.store, 'close'), patch('requests.get', side_effect=AssertionError('discovery forbidden')):
+            self.assertEqual(run_daily(args, self.root)['status'], 'preview')
+
+    def test_mail_waits_until_hourly_classification_admits_content(self):
+        self.configured()
+        self.ingest(item())
+        cfg = {**self.meter.config, 'db_path': str(self.store.path), 'report_dir': str(self.root / 'reports')}
+        args = SimpleNamespace(config='unused', date='2026-09-09', send=False)
+        with patch('trendradar.content_pool.hosted.Meter.chat', side_effect=AssertionError('mail_called_model')), patch('trendradar.content_pool.hosted.configuration', return_value=(cfg, self.meter.ai, self.processor.cfg)), patch('trendradar.content_pool.hosted.Store', return_value=self.store), patch.object(self.store, 'close'), patch('requests.get', side_effect=AssertionError('discovery forbidden')):
+            result = run_daily(args, self.root)
+        self.assertEqual(result, {'status': 'waiting_for_classification', 'date': '2026-09-09'})
+        self.assertEqual(self.count('digest_days'), 0)
+
+    def test_collect_spaces_model_calls_across_the_hour(self):
+        from scripts.collect_hosted import classify_once
+        from trendradar.content_pool.llm import Meter
+        self.ingest(item('1'), item('2'))
+        constructions = []
+        fake = self.fake
+
+        class Spy(Meter):
+            def __init__(self, store, ai, config=None, factory=None):
+                constructions.append(dict(config))
+                super().__init__(store, ai, config, factory=lambda _: fake)
+
+        started = '1970-01-01T00:00:00+00:00'
+        with patch('scripts.collect_hosted.Meter', Spy):
+            first = classify_once(self.store, self.meter.config, {'MODEL': 'fake'}, self.cfg, started, set())
+            second = classify_once(self.store, self.meter.config, {'MODEL': 'fake'}, self.cfg, started, set())
+        self.assertEqual(first['classification'], 'called')
+        self.assertEqual(first['gap_seconds'], 3600)
+        self.assertEqual(constructions[0]['run_call_budget'], 1)
+        self.assertIsNone(constructions[0]['daily_window'])
+        self.assertEqual(len(constructions), 1)
+        self.assertEqual(second['classification'], 'deferred')
+        self.assertEqual(second['gap_seconds'], 3600)
+        self.assertEqual(len(fake.calls), 1)
+
 
 class ConfigurationTests(unittest.TestCase):
     def test_dst_windows(self):
@@ -139,6 +184,9 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn('-ge 5', retry['steps'][0]['run'])
         collect_w = yaml.safe_load((root / '.github/workflows/content-collect.yml').read_text())
         self.assertEqual(collect_w['concurrency'], daily['concurrency'])
+        self.assertIn('AI_API_KEY', collect_w['jobs']['collect']['env'])
+        step_names = [step.get('name') for step in collect_w['jobs']['collect']['steps']]
+        self.assertIn('Collect and classify one paced model call', step_names)
         self.assertIn('CONTENT_SCHEDULE_ENABLED', daily['jobs']['daily']['if'])
         self.assertEqual(collect_w['jobs']['collect']['steps'][-1]['if'], 'always()')
         compose = yaml.safe_load((root / 'docker/docker-compose.actions.yml').read_text())

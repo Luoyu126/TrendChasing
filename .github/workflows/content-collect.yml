@@ -24,6 +24,10 @@ jobs:
     env:
       CONTENT_DATABASE_BACKEND: supabase
       SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+      AI_API_KEY: ${{ secrets.AI_API_KEY }}
+      AI_MODEL: ${{ vars.AI_MODEL }}
+      AI_API_BASE: ${{ vars.AI_API_BASE }}
+      AI_TIMEOUT: '90'
       CONTENT_SOURCES_CONFIG: ${{ vars.CONTENT_SOURCES_CONFIG }}
       WERSS_BASE_URL: ${{ secrets.WERSS_BASE_URL }}
       RSSHUB_URL: http://127.0.0.1:1200
@@ -49,7 +53,7 @@ jobs:
           ZHIHU_COOKIES: ${{ secrets.ZHIHU_COOKIES }}
           TWITTER_AUTH_TOKEN: ${{ secrets.TWITTER_AUTH_TOKEN }}
         run: docker compose -f docker/docker-compose.actions.yml up -d --wait --wait-timeout 240
-      - name: Collect without AI or email
+      - name: Collect and classify one paced model call
         env:
           COLLECT_MODE: ${{ inputs.mode || 'full' }}
         run: |
