@@ -400,6 +400,63 @@ ai:
   fallback_models: []               # 备用模型列表（可选）
                                     # 示例: ["openai/gpt-4o-mini", "openai/deepseek-ai/DeepSeek-V3"]
 
+  # 密钥只放在环境变量里。限流、超时或连不上时按 fallbacks 顺序转发。
+  # 思考模式在客户端统一关掉。gpt-oss 和 Gemini 3 不能完全关闭，只压到最低档。
+  # Groq 免费档按模型分开计算：每个模型每天约 1000 次、20 万 token。
+  # 分类每天大约十几批，先用最省输出的 Qwen，打满后再换另外两个 Groq 模型。
+  # Gemini 免费但每天请求数少，只负责论文评分和当天那一次汇总。
+  # 国内 Kimi 有 15 元代金券，只用于每天一次的中文汇总。DeepSeek 余额仍是 0。
+  endpoints:
+    - id: groq-qwen
+      model: groq/qwen/qwen3.8-27b
+      api_key_env: GROQ_API_KEY
+      difficulty: routine
+    - id: groq-20b
+      model: groq/openai/gpt-oss-20b
+      api_key_env: GROQ_API_KEY
+      difficulty: routine
+    - id: groq-120b
+      model: groq/openai/gpt-oss-120b
+      api_key_env: GROQ_API_KEY
+      difficulty: standard
+    - id: gemini
+      model: gemini/gemini-3.5-flash
+      api_key_env: GEMINI_API_KEY
+      difficulty: standard
+    - id: kimi
+      model: openai/kimi-k2.6
+      api_base: https://api.moonshot.cn/v1
+      api_key_env: MOONSHOT_CN_API_KEY
+      difficulty: hard
+      request_params:
+        temperature: 0.6
+        extra_body:
+          thinking:
+            type: disabled
+    - id: deepseek
+      model: deepseek/deepseek-flash
+      api_key_env: DEEPSEEK_API_KEY
+      difficulty: hard
+  tasks:
+    classification:          # 分类和长文分段。量最大，走 Groq 免费额度。
+      endpoint: groq-qwen
+      fallbacks: [groq-20b, groq-120b, gemini]
+    summary:                 # 每天一次中文汇总，用国内 Kimi 的代金券。
+      endpoint: kimi
+      fallbacks: [gemini, groq-qwen]
+    paper:                   # 论文相关性。数量中等，需要更稳的判断。
+      endpoint: gemini
+      fallbacks: [groq-120b]
+    analysis:
+      endpoint: groq-qwen
+      fallbacks: [gemini]
+    translation:
+      endpoint: groq-qwen
+      fallbacks: [gemini]
+    filter:
+      endpoint: groq-qwen
+      fallbacks: [gemini]
+
   # 额外参数（一般无需修改，删掉 # 号即可启用）
   # extra_params:
   #   top_p: 1.0

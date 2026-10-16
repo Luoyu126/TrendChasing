@@ -18,7 +18,8 @@ sys.path.insert(0, str(ROOT))
 from trendradar.content_pool.runtime import load_env
 
 SECRET_NAMES = (
-    'SUPABASE_DATABASE_URL', 'AI_API_KEY', 'EMAIL_FROM', 'EMAIL_TO',
+    'SUPABASE_DATABASE_URL', 'AI_API_KEY', 'GROQ_API_KEY', 'GEMINI_API_KEY',
+    'MOONSHOT_CN_API_KEY', 'EMAIL_FROM', 'EMAIL_TO',
     'EMAIL_PASSWORD', 'XIAOHONGSHU_COOKIE', 'ZHIHU_COOKIES', 'TWITTER_AUTH_TOKEN',
 )
 

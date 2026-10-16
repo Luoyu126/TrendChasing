@@ -10,6 +10,26 @@ import os
 from typing import Any, Dict, List
 
 from litellm import completion
+from litellm.llms.vertex_ai.gemini.vertex_and_google_ai_studio_gemini import (
+    VertexGeminiConfig,
+)
+
+from trendradar.ai.router import apply_no_thinking, parse_routes, should_forward
+
+# Gemini 3.5 accepts a zero thinking budget. This LiteLLM build maps "none" to
+# thinking level "low" for that model, which still spends reasoning tokens.
+_map_gemini_thinking_level = VertexGeminiConfig._map_reasoning_effort_to_thinking_level
+
+
+def _gemini_thinking_level(reasoning_effort, model=None):
+    if reasoning_effort in ("none", "disable"):
+        return {"thinkingBudget": 0, "includeThoughts": False}
+    return _map_gemini_thinking_level(reasoning_effort, model)
+
+
+VertexGeminiConfig._map_reasoning_effort_to_thinking_level = staticmethod(
+    _gemini_thinking_level
+)
 
 
 class AIClient:
@@ -29,6 +49,7 @@ class AIClient:
                 - TIMEOUT: 请求超时时间（秒）
                 - NUM_RETRIES: 重试次数（可选）
                 - FALLBACK_MODELS: 备用模型列表（可选）
+                - ENDPOINTS / TASKS: 多接口分配；未分配的任务仍走 MODEL
         """
         self.model = config.get("MODEL", "deepseek/deepseek-chat")
         self.api_key = config.get("API_KEY") or os.environ.get("AI_API_KEY", "")
@@ -39,10 +60,13 @@ class AIClient:
         self.num_retries = config.get("NUM_RETRIES", 2)
         self.fallback_models = config.get("FALLBACK_MODELS", [])
         self.extra_params = config.get("EXTRA_PARAMS", {})
+        self.routes = parse_routes({**config, "API_KEY": self.api_key})
+        self._usage = {}
         self.last_usage = None
         self.last_cost = None
+        self.last_endpoint = None
 
-    def chat(self, messages: List[Dict[str, str]], **kwargs) -> str:
+    def chat(self, messages: List[Dict[str, str]], task=None, endpoint_id=None, **kwargs) -> str:
         """
         调用 AI 模型进行对话
 
@@ -56,9 +80,24 @@ class AIClient:
         Raises:
             Exception: API 调用失败时抛出异常
         """
+        if endpoint_id:
+            return self._complete(self.routes.get(endpoint_id), messages, kwargs)
+        last = None
+        for endpoint in self.routes.candidates(task, self._usage):
+            try:
+                return self._complete(endpoint, messages, kwargs)
+            except Exception as exc:
+                last = exc
+                if not should_forward(exc):
+                    raise
+        if last is None:
+            raise RuntimeError("no_endpoint_available")
+        raise last
+
+    def _complete(self, endpoint, messages, kwargs):
         # 构建请求参数
         params = {
-            "model": self.model,
+            "model": endpoint.model or self.model,
             "messages": messages,
             "temperature": kwargs.get("temperature", self.temperature),
             "timeout": kwargs.get("timeout", self.timeout),
@@ -67,31 +106,35 @@ class AIClient:
 
         params.update(self.extra_params)
 
-        # 添加 API Key
-        if self.api_key:
-            params["api_key"] = self.api_key
-
-        # 添加 API Base（如果配置了）
-        if self.api_base:
-            params["api_base"] = self.api_base
+        api_key = endpoint.api_key or self.api_key
+        api_base = endpoint.api_base or (self.api_base if endpoint.id == "primary" else "")
+        if api_key:
+            params["api_key"] = api_key
+        if api_base:
+            params["api_base"] = api_base
 
         # 添加 max_tokens（如果配置了且不为 0）
         max_tokens = kwargs.get("max_tokens", self.max_tokens)
         if max_tokens and max_tokens > 0:
             params["max_tokens"] = max_tokens
+        # Endpoint constraints override the caller, such as Kimi's fixed temperature.
+        params.update(endpoint.request_params)
 
-        # 添加 fallback 模型（如果配置了）
-        if self.fallback_models:
+        # 单个 deployment 的失败由上面的候选列表转发，不再交给 LiteLLM 隐式换模型。
+        # 只有主接口、且没有任务分配时，才保留原来的 fallback_models。
+        if endpoint.id == "primary" and not self.routes.tasks and self.fallback_models:
             params["fallbacks"] = self.fallback_models
 
         # 合并其他额外参数
         for key, value in kwargs.items():
-            if key not in params:
+            if key not in params and key not in ("task", "endpoint_id"):
                 params[key] = value
+        apply_no_thinking(params)
 
         # 调用 LiteLLM
         self.last_usage = None
         self.last_cost = None
+        self.last_endpoint = endpoint.id
         response = completion(**params)
         usage = getattr(response, "usage", None)
         if usage is not None:
@@ -99,6 +142,8 @@ class AIClient:
                 "input_tokens": getattr(usage, "prompt_tokens", None),
                 "output_tokens": getattr(usage, "completion_tokens", None),
             }
+            spent = (self.last_usage["input_tokens"] or 0) + (self.last_usage["output_tokens"] or 0)
+            self._usage[endpoint.id] = self._usage.get(endpoint.id, 0) + spent
         # Only record a cost supplied by the provider/client; do not invent prices.
         self.last_cost = (getattr(response, "_hidden_params", None) or {}).get(
             "response_cost"

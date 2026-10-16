@@ -271,6 +271,9 @@ def _load_ai_config(config_data: Dict) -> Dict:
         "NUM_RETRIES": ai_config.get("num_retries", 2),
         "FALLBACK_MODELS": ai_config.get("fallback_models", []),
         "EXTRA_PARAMS": ai_config.get("extra_params", {}),
+        # Absent until a task is assigned. Unassigned calls keep MODEL above.
+        "ENDPOINTS": ai_config.get("endpoints") or [],
+        "TASKS": ai_config.get("tasks") or {},
     }
 
 

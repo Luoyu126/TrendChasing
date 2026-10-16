@@ -100,6 +100,112 @@ class PacingTests(unittest.TestCase):
             ).chat("paper", [])
         self.assertEqual(clock.waits, [60])
 
+    def test_rate_limit_forwards_to_the_next_assigned_api(self):
+        class RateLimitError(Exception):
+            status_code = 429
+
+        seen = []
+
+        class Forwarding(Client):
+            def chat(self, *args, **kwargs):
+                seen.append(kwargs["endpoint_id"])
+                if kwargs["endpoint_id"] == "glm":
+                    raise RateLimitError()
+                return "{}"
+
+        ai = {
+            "MODEL": "openai/primary",
+            "API_KEY": "primary-key",
+            "API_BASE": "https://primary.example",
+            "ENDPOINTS": [
+                {
+                    "id": "glm",
+                    "model": "openai/glm-4.7-flash",
+                    "api_base": "https://glm.example",
+                    "api_key": "glm-key",
+                    "difficulty": "routine",
+                },
+                {
+                    "id": "backup",
+                    "model": "openai/backup",
+                    "api_base": "https://backup.example",
+                    "api_key": "backup-key",
+                    "difficulty": "hard",
+                },
+            ],
+            "TASKS": {"classification": {"endpoint": "glm", "fallbacks": ["backup"]}},
+        }
+        clock = Clock()
+        with patch("trendradar.content_pool.llm.time", clock):
+            self.assertEqual(
+                Meter(self.store, ai, {"min_request_interval": 30}, Forwarding).chat(
+                    "classification", []
+                ),
+                "{}",
+            )
+            seen.clear()
+            Meter(self.store, ai, {"min_request_interval": 30}, Forwarding).chat(
+                "classification", []
+            )
+        self.assertEqual(seen, ["backup"])
+
+    def test_same_difficulty_prefers_the_endpoint_with_more_room(self):
+        seen = []
+
+        class Recording(Client):
+            def chat(self, *args, **kwargs):
+                seen.append(kwargs["endpoint_id"])
+                return "{}"
+
+        ai = {
+            "MODEL": "openai/primary",
+            "API_KEY": "primary-key",
+            "ENDPOINTS": [
+                {
+                    "id": "glm",
+                    "model": "openai/glm",
+                    "api_key": "glm-key",
+                    "difficulty": "standard",
+                    "token_budget": 100,
+                },
+                {
+                    "id": "backup",
+                    "model": "openai/backup",
+                    "api_key": "backup-key",
+                    "difficulty": "standard",
+                    "token_budget": 100,
+                },
+            ],
+            "TASKS": {"paper": {"min_difficulty": "standard"}},
+        }
+        meter = Meter(self.store, ai, {"min_request_interval": 0}, Recording)
+        meter.store.db.execute(
+            "INSERT INTO llm_route_usage VALUES ('glm',1,90),('backup',1,10)"
+        )
+        meter.store.db.commit()
+        meter.chat("paper", [])
+        self.assertEqual(seen, ["backup"])
+
+    def test_unassigned_task_stays_on_the_primary_api(self):
+        seen = []
+
+        class Recording(Client):
+            def chat(self, *args, **kwargs):
+                seen.append(kwargs["endpoint_id"])
+                return "{}"
+
+        ai = {
+            "MODEL": "openai/primary",
+            "API_KEY": "primary-key",
+            "ENDPOINTS": [
+                {"id": "glm", "model": "openai/glm", "api_key": "glm-key"},
+            ],
+        }
+        Meter(self.store, ai, {"min_request_interval": 0}, Recording).chat(
+            "classification", []
+        )
+        self.assertEqual(seen, ["primary"])
+
     def test_two_connections_never_call_simultaneously(self):
         active = 0
         peak = 0

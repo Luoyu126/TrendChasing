@@ -6,6 +6,8 @@ import math
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from trendradar.ai.router import parse_routes
+
 from .arxiv import date, fetch
 from .config import load, validate
 from .state import State, digest
@@ -37,7 +39,16 @@ def prefilter(paper, cfg):
 def cache_key(paper, cfg, ai_config, prompt_version=PROMPT_VERSION):
     # Credentials and paths are not judgments. All interest and ranking settings are.
     interests = {k: v for k, v in cfg.items() if k not in ("state_path", "enabled")}
-    model = {k: v for k, v in ai_config.items() if k not in ("API_KEY",)}
+    model = {
+        k: v
+        for k, v in ai_config.items()
+        if k not in ("API_KEY", "ENDPOINTS", "TASKS")
+    }
+    chosen = parse_routes(ai_config).preferred("paper")
+    if chosen.id != "primary":
+        model["MODEL"] = chosen.model
+        model["API_BASE"] = chosen.api_base
+        model["ROUTE_ID"] = chosen.id
     return digest([paper.to_dict(), interests, model, prompt_version, SYSTEM_PROMPT])
 
 
@@ -82,6 +93,7 @@ def score_paper(paper, cfg, client):
         ],
         temperature=0,
         response_format={"type": "json_object"},
+        task="paper",
     )
     return validate_result(json.loads(raw))
 

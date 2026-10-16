@@ -347,6 +347,15 @@ class Processor:
                 for r in candidates
                 if position(r["published_at"], window) in ("primary", "supplement")
             ]
+            # Free daily quotas cover the new day, not the whole backlog.
+            candidates.sort(
+                key=lambda r: (
+                    0 if position(r["published_at"], window) == "primary" else 1,
+                    r["first_seen_at"],
+                    r["platform"],
+                    r["content_id"],
+                )
+            )
         for item in candidates[:limit]:
             if item["evaluation_key"] == fingerprint:
                 continue
